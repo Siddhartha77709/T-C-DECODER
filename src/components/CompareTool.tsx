@@ -249,38 +249,41 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
     savedDocs.find(d => d.id === selectedDocId) || savedDocs[0] || null
   , [selectedDocId, savedDocs]);
 
-  const allClauses = selectedDoc?.analyzed_clauses || selectedDoc?.clauses || [];
+  const allClauses = useMemo(
+    () => selectedDoc?.analyzed_clauses || selectedDoc?.clauses || [],
+    [selectedDoc]
+  );
 
-  // Track expanded clause IDs properly
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  // Use index-based keys to avoid undefined/duplicate clause_id issues with old saved docs
+  const [expandedIndexes, setExpandedIndexes] = useState<Set<number>>(new Set());
 
-  // Initialize all clause IDs as expanded when document changes
+  // Initialize all indexes as expanded when document or clause list changes
   useEffect(() => {
     if (allClauses.length > 0) {
-      setExpandedIds(new Set(allClauses.map(c => c.clause_id)));
+      setExpandedIndexes(new Set(allClauses.map((_, idx) => idx)));
     } else {
-      setExpandedIds(new Set());
+      setExpandedIndexes(new Set());
     }
-  }, [selectedDocId, allClauses.length]);
+  }, [selectedDocId, allClauses]);
 
   const handleExpandAll = () => {
-    setExpandedIds(new Set(allClauses.map(c => c.clause_id)));
+    setExpandedIndexes(new Set(allClauses.map((_, idx) => idx)));
   };
 
   const handleCollapseAll = () => {
-    setExpandedIds(new Set());
+    setExpandedIndexes(new Set());
   };
 
-  const toggleExpand = (id: number) => {
-    setExpandedIds(prev => {
+  const toggleExpand = (idx: number) => {
+    setExpandedIndexes(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
       return next;
     });
   };
 
-  const isExpanded = (id: number) => expandedIds.has(id);
+  const isExpanded = (idx: number) => expandedIndexes.has(idx);
 
   const overallBadge = selectedDoc ? getRatingBadge(selectedDoc.overall_rating || selectedDoc.verdict || 'Balanced') : null;
 
@@ -443,11 +446,11 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
             ) : (
               allClauses.map((clause, idx) => (
                 <ClauseValidationCard
-                  key={clause.clause_id || idx}
+                  key={idx}
                   clause={clause}
                   index={idx}
-                  isExpanded={isExpanded(clause.clause_id)}
-                  onToggle={() => toggleExpand(clause.clause_id)}
+                  isExpanded={isExpanded(idx)}
+                  onToggle={() => toggleExpand(idx)}
                 />
               ))
             )}

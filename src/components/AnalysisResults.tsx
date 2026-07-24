@@ -305,26 +305,25 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   const allClauses = analyzed_clauses.length > 0 ? analyzed_clauses : clauses;
   const summaryText = document_summary || executive_summary;
 
-  const [expandedClauseIds, setExpandedClauseIds] = useState<Set<number>>(new Set());
+  const [expandedClauseIndexes, setExpandedClauseIndexes] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    setExpandedClauseIds(new Set());
+    setExpandedClauseIndexes(new Set());
   }, [result]);
 
   const handleExpandAll = () => {
-    const allIds = new Set(allClauses.map(c => c.clause_id));
-    setExpandedClauseIds(allIds);
+    setExpandedClauseIndexes(new Set(allClauses.map((_, idx) => idx)));
   };
 
   const handleCollapseAll = () => {
-    setExpandedClauseIds(new Set());
+    setExpandedClauseIndexes(new Set());
   };
 
-  const toggleClause = (id: number) => {
-    setExpandedClauseIds(prev => {
+  const toggleClause = (idx: number) => {
+    setExpandedClauseIndexes(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
       return next;
     });
   };
@@ -469,11 +468,11 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
         ) : (
           allClauses.map((clause, idx) => (
             <ClauseCard
-              key={clause.clause_id || idx}
+              key={idx}
               clause={clause}
               index={idx}
-              isExpanded={expandedClauseIds.has(clause.clause_id)}
-              onToggle={() => toggleClause(clause.clause_id)}
+              isExpanded={expandedClauseIndexes.has(idx)}
+              onToggle={() => toggleClause(idx)}
             />
           ))
         )}
