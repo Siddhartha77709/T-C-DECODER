@@ -287,7 +287,7 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   result,
   onSave,
   isSaved,
-  onCompare,
+  onCompare: _onCompare,
 }) => {
   const {
     provider_title,
