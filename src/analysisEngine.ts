@@ -134,11 +134,12 @@ export async function quickValidateLegalDocument(
   if (fast.ok) return { ok: true };
   if (fast.reason && fast.reason !== 'AMBIGUOUS') return { ok: false, reason: fast.reason };
 
-  if (!GEMINI_API_KEY || !GEMINI_API_KEY.trim()) {
+  const configuredKey = getGeminiApiKeyOrEmpty();
+  if (!configuredKey) {
     return { ok: false, reason: 'Ambiguous content classification and no Gemini API key configured.' };
   }
 
-  const apiKey = GEMINI_API_KEY.trim();
+  const apiKey = configuredKey;
 
   const validationPrompt = `Answer with ONLY a JSON object like: {"is_legal_agreement": true_or_boolean, "justification": "one short sentence"}.
 Classify the following text snippet. Return is_legal_agreement = TRUE only if the text appears to be a Terms of Service, Terms & Conditions, Privacy Policy, SaaS Agreement, NDA, Employment Contract, Consumer Contract, Rental/Lease Agreement, Legal Notice, or other legally binding user-to-company or party-to-party contract.
@@ -346,13 +347,33 @@ interface RawReport {
   overall_risk_rating?: string;
 }
 
-declare const process: {
-  env: {
-    GEMINI_API_KEY?: string;
-  };
-};
+const VITE_GEMINI_API_KEY: string =
+  (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string')
+    ? import.meta.env.VITE_GEMINI_API_KEY
+    : '';
 
-const GEMINI_API_KEY = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || '';
+const GEMINI_API_KEY_MISSING_ERROR =
+  'Gemini API key is not configured. Please set VITE_GEMINI_API_KEY in your local .env file and restart the dev server.';
+
+function getGeminiApiKeyOrThrow(context?: string): string {
+  const key = (VITE_GEMINI_API_KEY || '').trim();
+  if (!key) {
+    const ctx = context ? ` [${context}]` : '';
+    const err = new Error(GEMINI_API_KEY_MISSING_ERROR + ctx);
+    console.error('[Gemini Config] API key missing.', {
+      hasImportMetaEnv: typeof import.meta !== 'undefined' && !!import.meta?.env,
+      keyLength: VITE_GEMINI_API_KEY.length,
+      context: context || '(none)',
+    });
+    throw err;
+  }
+  return key;
+}
+
+function getGeminiApiKeyOrEmpty(): string {
+  return (VITE_GEMINI_API_KEY || '').trim();
+}
+
 const RETRY_MAX_ATTEMPTS = 4;
 const RETRY_WAIT_MS = 4000;
 const GEMINI_MODEL = 'gemini-3.6-flash';
@@ -538,13 +559,7 @@ export async function analyzeDocumentWithLLM(
   ocrMetrics?: OCRMetrics,
   onPipelineStep?: (step: number) => void
 ): Promise<LegalAnalysisReport> {
-  if (!GEMINI_API_KEY || !GEMINI_API_KEY.trim()) {
-    throw new Error(
-      "Gemini API key is not configured in the application environment."
-    );
-  }
-
-  const apiKey = GEMINI_API_KEY.trim();
+  const apiKey = getGeminiApiKeyOrThrow('analyzeDocumentWithLLM');
 
   const normalizedText = text
     .replace(/\r\n/g, '\n')

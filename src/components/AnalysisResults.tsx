@@ -528,131 +528,133 @@ const ClauseCard: React.FC<{
               </p>
             </div>
           </div>
+        </section>
 
-          <div className="rounded-2xl p-4 flex flex-col gap-3 shadow-inner min-w-0 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 border border-indigo-900/60">
-            <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
-                <div className="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center flex-shrink-0">
-                  <Award className="w-4 h-4 text-indigo-300 flex-shrink-0" />
+        <div className="md:col-span-2 w-full max-w-none block clear-both mt-2">
+          <div className="rounded-2xl p-5 md:p-6 flex flex-col gap-4 md:gap-5 shadow-inner w-full max-w-full block bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 border border-indigo-900/60">
+            <div className="flex flex-wrap items-center justify-between gap-3 md:gap-4 w-full">
+              <div className="flex items-center gap-2.5 md:gap-3 flex-wrap flex-1 w-full">
+                <div className="w-9 h-9 md:w-10 md:h-10 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center flex-shrink-0">
+                  <Award className="w-4.5 h-4.5 md:w-5 md:h-5 text-indigo-300 flex-shrink-0" />
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-indigo-300 whitespace-normal break-words min-w-0">
+                  <span className="text-xs md:text-sm font-black uppercase tracking-[0.14em] text-indigo-300 whitespace-normal break-words">
                     Step 12 · Semantic Validation
                   </span>
-                  <span className="text-[10px] text-slate-400 font-semibold whitespace-normal break-words min-w-0">
-                    LLM self-check vs. source text
+                  <span className="text-[11px] md:text-xs text-slate-400 font-semibold whitespace-normal break-words">
+                    LLM self-check comparing summary against the original source text
                   </span>
                 </div>
               </div>
-              <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg border whitespace-nowrap flex-shrink-0 ${
+              <span className={`text-[10px] md:text-xs font-black px-3 md:px-3.5 py-1.5 md:py-2 rounded-lg border whitespace-nowrap flex-shrink-0 ${
                 clause.validation.validation_status === 'PASSED'
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                   : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
               }`}>
-                {clause.validation.validation_status}
+                Status · {clause.validation.validation_status}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 min-w-0">
-              <div className="bg-white/5 rounded-lg border border-white/10 p-3 flex flex-col gap-1 min-w-0">
-                <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider whitespace-nowrap flex-shrink-0">
+            <div className="grid grid-cols-4 gap-3 md:gap-5 w-full min-w-full">
+              <div className="bg-white/5 rounded-xl border border-white/10 px-3 md:px-4 py-3.5 md:py-4.5 flex flex-col items-center justify-center gap-2 md:gap-2.5 w-full text-center overflow-visible">
+                <span className="text-xs uppercase tracking-wider font-bold text-center whitespace-nowrap overflow-hidden text-ellipsis w-full text-slate-300">
                   Semantic Match
                 </span>
-                <div className="flex items-end gap-1 min-w-0">
-                  <span className={`text-xl font-black whitespace-normal break-words min-w-0 ${matchPctColor}`}>
+                <div className="flex items-end gap-1">
+                  <span className={`text-2xl md:text-3xl font-black tabular-nums whitespace-nowrap ${matchPctColor}`}>
                     {semMatch}
                   </span>
-                  <span className="text-[11px] font-bold text-slate-400 pb-0.5 whitespace-normal break-words min-w-0">%</span>
+                  <span className="text-sm md:text-base font-bold text-slate-400 pb-0.5 md:pb-1 whitespace-nowrap">%</span>
                 </div>
-                <div className="h-1 rounded-full bg-white/5 overflow-hidden w-full min-w-0">
+                <div className="h-2 md:h-2.5 rounded-full bg-white/5 overflow-hidden w-full">
                   <div className={`h-full rounded-full whitespace-normal bg-gradient-to-r ${matchBarColor}`} style={{ width: `${Math.max(0, Math.min(100, semMatch))}%` }} />
                 </div>
               </div>
-              <div className="bg-white/5 rounded-lg border border-white/10 p-3 flex flex-col gap-1 min-w-0">
-                <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider whitespace-nowrap flex-shrink-0">
+              <div className="bg-white/5 rounded-xl border border-white/10 px-3 md:px-4 py-3.5 md:py-4.5 flex flex-col items-center justify-center gap-2 md:gap-2.5 w-full text-center overflow-visible">
+                <span className="text-xs uppercase tracking-wider font-bold text-center whitespace-nowrap overflow-hidden text-ellipsis w-full text-slate-300">
                   Legal Meaning
                 </span>
-                <span className="text-sm font-black flex items-center gap-1 text-white whitespace-normal break-words min-w-0">
+                <span className="text-lg md:text-xl font-black flex items-center justify-center gap-1.5 text-white whitespace-nowrap">
                   {legalKept ? (
-                    <><CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" /> Yes</>
+                    <><CheckCircle className="w-5 h-5 md:w-6 md:h-6 text-emerald-400 flex-shrink-0" /> Yes</>
                   ) : (
-                    <><XCircle className="w-4 h-4 text-rose-400 flex-shrink-0" /> No</>
+                    <><XCircle className="w-5 h-5 md:w-6 md:h-6 text-rose-400 flex-shrink-0" /> No</>
                   )}
                 </span>
-                <span className="text-[9px] text-slate-500 font-semibold whitespace-normal break-words min-w-0 leading-tight">
+                <span className="text-[11px] md:text-xs text-slate-500 font-semibold whitespace-normal w-full text-center leading-tight">
                   {legalKept ? 'Preserved' : 'Nuance lost'}
                 </span>
               </div>
-              <div className="bg-white/5 rounded-lg border border-white/10 p-3 flex flex-col gap-1 min-w-0">
-                <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider whitespace-nowrap flex-shrink-0">
+              <div className="bg-white/5 rounded-xl border border-white/10 px-3 md:px-4 py-3.5 md:py-4.5 flex flex-col items-center justify-center gap-2 md:gap-2.5 w-full text-center overflow-visible">
+                <span className="text-xs uppercase tracking-wider font-bold text-center whitespace-nowrap overflow-hidden text-ellipsis w-full text-slate-300">
                   Misinterpret Risk
                 </span>
-                <span className={`text-sm font-black whitespace-normal break-words min-w-0 ${misRiskColor}`}>
+                <span className={`text-lg md:text-xl font-black whitespace-nowrap ${misRiskColor}`}>
                   {misRisk}
                 </span>
-                <span className="text-[9px] text-slate-500 font-semibold whitespace-normal break-words min-w-0 leading-tight">
+                <span className="text-[11px] md:text-xs text-slate-500 font-semibold whitespace-normal w-full text-center leading-tight">
                   Reader confusion risk
                 </span>
               </div>
-              <div className="bg-white/5 rounded-lg border border-white/10 p-3 flex flex-col gap-1 min-w-0">
-                <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider whitespace-nowrap flex-shrink-0">
+              <div className="bg-white/5 rounded-xl border border-white/10 px-3 md:px-4 py-3.5 md:py-4.5 flex flex-col items-center justify-center gap-2 md:gap-2.5 w-full text-center overflow-visible">
+                <span className="text-xs uppercase tracking-wider font-bold text-center whitespace-nowrap overflow-hidden text-ellipsis w-full text-slate-300">
                   Hallucinated
                 </span>
-                <span className="text-sm font-black flex items-center gap-1 text-white whitespace-normal break-words min-w-0">
+                <span className="text-lg md:text-xl font-black flex items-center justify-center gap-1.5 text-white whitespace-nowrap">
                   {!hasHallucinated ? (
-                    <><CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" /> None</>
+                    <><CheckCircle className="w-5 h-5 md:w-6 md:h-6 text-emerald-400 flex-shrink-0" /> None</>
                   ) : (
-                    <><XCircle className="w-4 h-4 text-rose-400 flex-shrink-0" /> Yes</>
+                    <><XCircle className="w-5 h-5 md:w-6 md:h-6 text-rose-400 flex-shrink-0" /> Yes</>
                   )}
                 </span>
-                <span className="text-[9px] text-slate-500 font-semibold whitespace-normal break-words min-w-0 leading-tight">
+                <span className="text-[11px] md:text-xs text-slate-500 font-semibold whitespace-normal w-full text-center leading-tight">
                   {hallucinatedLabel}
                 </span>
               </div>
             </div>
 
-            <div className="min-w-0">
+            <div className="w-full">
               <button
                 onClick={() => setDetailsOpen(v => !v)}
-                className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300 hover:text-white transition-colors whitespace-nowrap flex-shrink-0"
+                className="flex items-center gap-2 text-xs md:text-sm font-bold text-slate-300 hover:text-white transition-colors whitespace-nowrap flex-shrink-0"
               >
-                <span>{detailsOpen ? 'Hide Validation Details' : 'Show Full Validation Details'}</span>
+                <span>{detailsOpen ? 'Hide Full Validation Details' : 'Show Full Validation Details'}</span>
                 {detailsOpen ? (
-                  <ChevronUp className="w-3.5 h-3.5 flex-shrink-0" />
+                  <ChevronUp className="w-4 h-4 flex-shrink-0" />
                 ) : (
-                  <ChevronDown className="w-3.5 h-3.5 flex-shrink-0" />
+                  <ChevronDown className="w-4 h-4 flex-shrink-0" />
                 )}
               </button>
 
               {detailsOpen && (
-                <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs text-slate-200 min-w-0">
-                  <div className="bg-white/5 rounded-lg border border-white/10 p-3 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-1 min-w-0 flex-wrap">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 whitespace-nowrap flex-shrink-0">
-                        Missing / Omitted Info
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 text-sm md:text-base text-slate-200 w-full">
+                  <div className="bg-white/5 rounded-xl border border-white/10 p-4 w-full">
+                    <div className="flex items-center gap-2 mb-2 w-full flex-wrap">
+                      <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-400 whitespace-nowrap flex-shrink-0">
+                        Missing / Omitted Information
                       </span>
                     </div>
-                    <p className="whitespace-normal break-words min-w-0 leading-relaxed font-medium">
+                    <p className="whitespace-normal break-words w-full leading-relaxed font-medium">
                       {clause.validation.missing_information || 'None — every nuance captured.'}
                     </p>
                   </div>
-                  <div className="bg-white/5 rounded-lg border border-white/10 p-3 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-1 min-w-0 flex-wrap">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 whitespace-nowrap flex-shrink-0">
-                        Hallucinated / Added
+                  <div className="bg-white/5 rounded-xl border border-white/10 p-4 w-full">
+                    <div className="flex items-center gap-2 mb-2 w-full flex-wrap">
+                      <span className="text-[10px] md:text-xs font-black uppercase tracking-wider text-slate-400 whitespace-nowrap flex-shrink-0">
+                        Hallucinated / Added Content
                       </span>
                     </div>
-                    <p className="whitespace-normal break-words min-w-0 leading-relaxed font-medium">
+                    <p className="whitespace-normal break-words w-full leading-relaxed font-medium">
                       {clause.semantic_validation?.hallucinated_content && clause.semantic_validation.hallucinated_content !== 'None' && clause.semantic_validation.hallucinated_content !== 'none'
                         ? clause.semantic_validation.hallucinated_content
-                        : (clause.validation.added_information || 'None — no invented facts.')}
+                        : (clause.validation.added_information || 'None — no invented facts detected.')}
                     </p>
                   </div>
                 </div>
               )}
             </div>
           </div>
-        </section>
+        </div>
       </div>
     </article>
   );
