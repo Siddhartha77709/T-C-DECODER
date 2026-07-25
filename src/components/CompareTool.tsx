@@ -1,10 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ChevronDown,
   ChevronUp,
   Lightbulb,
   FileText,
-  ShieldCheck,
   ShieldAlert,
   BookOpen,
   Search,
@@ -15,41 +14,43 @@ import {
   ChevronsUp,
   Sparkles
 } from 'lucide-react';
-import type { SavedDocument, AnalyzedClause, OverallRating } from '../types';
+import type { SavedDocument, DynamicClause, RiskLevel } from '../types';
 
 interface CompareToolProps {
   savedDocs: SavedDocument[];
 }
 
-function getRatingBadge(rating: OverallRating | string) {
-  switch (rating) {
-    case 'High Risk':
+function getRiskBadge(level: RiskLevel | string) {
+  switch (level) {
+    case 'Critical':
+      return { bg: 'bg-purple-100 text-purple-900 border-purple-300', Icon: ShieldAlert, color: 'text-purple-700' };
+    case 'High':
       return { bg: 'bg-red-50 text-red-800 border-red-200', Icon: ShieldAlert, color: 'text-red-600' };
-    case 'Be Careful':
-      return { bg: 'bg-orange-50 text-orange-800 border-orange-200', Icon: AlertTriangle, color: 'text-orange-600' };
-    case 'Needs Attention':
+    case 'Medium':
       return { bg: 'bg-amber-50 text-amber-800 border-amber-200', Icon: AlertTriangle, color: 'text-amber-600' };
-    case 'Balanced':
-      return { bg: 'bg-blue-50 text-blue-800 border-blue-200', Icon: Info, color: 'text-blue-600' };
-    case 'Mostly User Friendly':
-      return { bg: 'bg-emerald-50 text-emerald-800 border-emerald-200', Icon: ShieldCheck, color: 'text-emerald-600' };
-    case 'User Friendly':
-    case 'Low Risk':
+    case 'Low':
     default:
       return { bg: 'bg-green-50 text-green-800 border-green-200', Icon: CheckCircle, color: 'text-green-600' };
   }
 }
 
-function renderHighlightedQuote(quote: string, trigger: string): React.ReactNode {
-  if (!trigger || !quote) return <>{quote}</>;
+function renderHighlightedQuote(quote: string, triggers: string[]): React.ReactNode {
+  if (!triggers || triggers.length === 0 || !quote) return <>{quote}</>;
   const lowerQuote = quote.toLowerCase();
-  const lowerTrigger = trigger.toLowerCase();
-  const idx = lowerQuote.indexOf(lowerTrigger);
-  if (idx === -1) return <>{quote}</>;
+  let bestIdx = -1;
+  let bestTrigger = '';
+  for (const t of triggers) {
+    const idx = lowerQuote.indexOf(t.toLowerCase());
+    if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
+      bestIdx = idx;
+      bestTrigger = t;
+    }
+  }
+  if (bestIdx === -1) return <>{quote}</>;
 
-  const before = quote.substring(0, idx);
-  const matchedText = quote.substring(idx, idx + trigger.length);
-  const after = quote.substring(idx + trigger.length);
+  const before = quote.substring(0, bestIdx);
+  const matchedText = quote.substring(bestIdx, bestIdx + bestTrigger.length);
+  const after = quote.substring(bestIdx + bestTrigger.length);
 
   return (
     <span>
@@ -63,29 +64,27 @@ function renderHighlightedQuote(quote: string, trigger: string): React.ReactNode
 }
 
 const ClauseValidationCard: React.FC<{
-  clause: AnalyzedClause;
+  clause: DynamicClause;
   index: number;
   isExpanded: boolean;
   onToggle: () => void;
 }> = ({ clause, index, isExpanded, onToggle }) => {
-  const assessment = clause.overall_clause_assessment || clause.risk_level || 'Needs Attention';
-  const badge = getRatingBadge(assessment);
+  const badge = getRiskBadge(clause.risk_level);
   const BadgeIcon = badge.Icon;
 
-  const fullSentence = clause.exact_original_wording || clause.exact_verbatim_quote || '';
-  const triggerText = (clause.trigger_words && clause.trigger_words.length > 0)
-    ? clause.trigger_words.join(', ')
-    : clause.highlighted_evidence || '';
+  const fullSentence = clause.evidence?.original_legal_sentence || '';
+  const triggerList = clause.evidence?.trigger_words || [];
+  const triggerText = triggerList.join(', ');
 
-  const summary = clause.plain_english_summary || clause.plain_english_translation || '';
-  const rationale = clause.interpretation_rationale || clause.why_ai_summarized || '';
+  const summary = clause.plain_english_summary || '';
+  const why = clause.why_it_matters || '';
   const rec = clause.recommendation || '';
-  const recRationale = clause.recommendation_rationale || clause.why_recommended || '';
-  const impact = clause.user_impact || clause.potential_user_impact || '';
+  const impact = clause.potential_user_impact || '';
+  const riskExpl = clause.risk_explanation || '';
+  const validation = clause.validation;
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden transition-all">
-      {/* Card Header */}
       <div
         onClick={onToggle}
         className="p-4 bg-gray-50/80 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-gray-100/60 transition-colors select-none"
@@ -96,10 +95,10 @@ const ClauseValidationCard: React.FC<{
           </div>
           <div className="flex flex-col">
             <h4 className="font-extrabold text-sm text-gray-900">
-              {clause.clause_title}
+              {clause.dynamic_title}
             </h4>
             <span className="text-[10px] font-semibold text-gray-500 mt-0.5">
-              Clause Traceability View
+              Clause Traceability View — ID: {clause.clause_id?.slice(0, 8) || 'dynamic'}
             </span>
           </div>
         </div>
@@ -107,7 +106,7 @@ const ClauseValidationCard: React.FC<{
         <div className="flex items-center gap-2.5 justify-between sm:justify-end">
           <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${badge.bg}`}>
             <BadgeIcon className={`w-3 h-3 ${badge.color}`} />
-            <span>{assessment}</span>
+            <span>{clause.risk_level}</span>
           </span>
           <button className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white flex-shrink-0">
             {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -115,125 +114,164 @@ const ClauseValidationCard: React.FC<{
         </div>
       </div>
 
-      {/* 2-Column Side-by-Side Validation Body */}
       {isExpanded && (
         <div className="p-5 grid grid-cols-1 lg:grid-cols-12 gap-6 bg-white animate-fade-in">
 
-          {/* LEFT COLUMN: Original Agreement Text (5 cols) */}
           <div className="lg:col-span-5 flex flex-col gap-3 border-r-0 lg:border-r border-gray-200 lg:pr-6">
             <span className="text-xs font-extrabold text-gray-900 flex items-center gap-1.5 uppercase tracking-wider">
               <BookOpen className="w-3.5 h-3.5 text-gray-500" />
-              Original Agreement
+              Original Agreement Evidence
             </span>
 
-            {/* Full Contiguous Legal Sentence (NO HEADERS) */}
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex flex-col gap-2">
               <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider">
                 Exact Original Legal Sentence:
               </span>
               <blockquote className="text-xs text-gray-800 font-mono leading-relaxed whitespace-pre-line italic">
-                "{renderHighlightedQuote(fullSentence, triggerText)}"
+                "{renderHighlightedQuote(fullSentence, triggerList)}"
               </blockquote>
+              {typeof clause.evidence?.char_start === 'number' && typeof clause.evidence?.char_end === 'number' && (
+                <div className="text-[10px] font-bold text-gray-500 pt-1 border-t border-gray-200">
+                  Source offsets: Pos {clause.evidence.char_start} – {clause.evidence.char_end} (chars)
+                </div>
+              )}
             </div>
 
-            {/* Trigger Evidence Box */}
             {triggerText && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex flex-col gap-1.5 text-xs">
                 <span className="font-extrabold text-amber-950 flex items-center gap-1">
                   <Search className="w-3.5 h-3.5 text-amber-600" />
-                  Trigger Words / Highlighted Evidence:
+                  Trigger Words / Evidence Tokens:
                 </span>
-                <div className="flex items-start gap-2">
-                  <mark className="bg-amber-200 text-amber-950 font-extrabold px-1.5 py-0.5 rounded border border-amber-300 font-mono text-[11px]">
-                    "{triggerText}"
-                  </mark>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {triggerList.map((t, i) => (
+                    <mark key={i} className="bg-amber-200 text-amber-950 font-extrabold px-1.5 py-0.5 rounded border border-amber-300 font-mono text-[11px]">
+                      "{t}"
+                    </mark>
+                  ))}
                 </div>
                 <p className="text-amber-900 font-medium leading-relaxed text-[11px]">
-                  These exact words from the original text triggered the AI to generate its summary and recommendation.
+                  These exact words from the original text were used by the LLM to anchor its summary and recommendation.
                 </p>
               </div>
             )}
           </div>
 
-          {/* RIGHT COLUMN: AI Interpretation & Traceability (7 cols) */}
           <div className="lg:col-span-7 flex flex-col gap-3.5">
             <span className="text-xs font-extrabold text-brand-700 flex items-center gap-1.5 uppercase tracking-wider">
               <Sparkles className="w-3.5 h-3.5 text-brand-600" />
-              AI Interpretation & Traceability
+              LLM Interpretation & Traceability
             </span>
 
-            {/* Step 1: Plain English Summary */}
             <div className="bg-brand-50/50 border border-brand-100 rounded-xl p-3.5 flex flex-col gap-1.5">
               <span className="text-[10px] uppercase font-extrabold text-brand-800 tracking-wider">
-                1. Plain English Summary
+                1. Plain English Summary (Grade 7-8)
               </span>
               <p className="text-xs text-gray-900 font-bold leading-relaxed">
                 {summary}
               </p>
             </div>
 
-            {/* Step 2: Why AI summarized it this way */}
-            {rationale && (
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 flex flex-col gap-1.5">
-                <span className="text-[10px] uppercase font-extrabold text-gray-600 tracking-wider">
-                  2. Why Did the AI Interpret It This Way?
-                </span>
-                <p className="text-xs text-gray-700 font-medium leading-relaxed">
-                  {rationale}
-                </p>
-              </div>
-            )}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-col gap-1.5">
+              <span className="text-[10px] uppercase font-extrabold text-slate-700 tracking-wider">
+                2. Why It Matters
+              </span>
+              <p className="text-xs text-gray-700 font-medium leading-relaxed">
+                {why}
+              </p>
+            </div>
 
-            {/* Steps 3 & 4: Recommendation + Reasoning */}
-            {(rec || recRationale) && (
+            {(rec || impact) && (
               <div className="bg-amber-50/40 border border-amber-200/80 rounded-xl p-3.5 flex flex-col gap-2.5">
                 {rec && (
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] uppercase font-extrabold text-amber-800 tracking-wider flex items-center gap-1">
                       <Lightbulb className="w-3 h-3 text-amber-600" />
-                      3. Recommendation
+                      3. Actionable Recommendation
                     </span>
                     <p className="text-xs text-gray-900 font-bold leading-relaxed">
                       {rec}
                     </p>
                   </div>
                 )}
-                {recRationale && (
+                {impact && (
                   <div className="border-t border-amber-200/50 pt-2 flex flex-col gap-1">
                     <span className="text-[10px] uppercase font-extrabold text-amber-800 tracking-wider">
-                      4. Why Was This Recommended?
+                      4. Potential User Impact (Worst Case)
                     </span>
                     <p className="text-xs text-gray-700 font-medium leading-relaxed">
-                      {recRationale}
+                      {impact}
                     </p>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Step 5: Potential User Impact */}
-            {impact && (
-              <div className="bg-blue-50/40 border border-blue-200/80 rounded-xl p-3.5 flex flex-col gap-1.5">
-                <span className="text-[10px] uppercase font-extrabold text-blue-900 tracking-wider flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3 text-blue-600" />
-                  5. Potential User Impact
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-start justify-between gap-3 text-xs">
+              <div className="flex flex-col gap-0.5">
+                <span className="font-extrabold text-gray-600 text-[10px] uppercase tracking-wider">
+                  5. Risk Rating & Justification
                 </span>
-                <p className="text-xs text-gray-800 font-medium leading-relaxed">
-                  {impact}
+                <p className="text-xs text-gray-700 font-medium leading-relaxed pr-2">
+                  {riskExpl}
                 </p>
               </div>
-            )}
-
-            {/* Step 6: Overall Clause Assessment */}
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-center justify-between text-xs">
-              <span className="font-extrabold text-gray-600 text-[10px] uppercase tracking-wider">
-                6. Overall Clause Assessment:
-              </span>
-              <span className={`text-xs font-extrabold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${badge.bg}`}>
+              <span className={`text-xs font-extrabold px-2.5 py-1 rounded-full border flex items-center gap-1.5 flex-shrink-0 ${badge.bg}`}>
                 <BadgeIcon className={`w-3 h-3 ${badge.color}`} />
-                {assessment}
+                {clause.risk_level}
               </span>
             </div>
+
+            {validation && (
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl p-3.5 border border-indigo-500/30 flex flex-col gap-2">
+                <div className="flex items-center justify-between border-b border-white/10 pb-1.5">
+                  <span className="text-[10px] font-extrabold uppercase text-brand-300 tracking-wider">
+                    Step 12 — AI Semantic Validation
+                  </span>
+                  <span className={`text-[10px] font-bold ${validation.validation_status === 'PASSED' ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {validation.validation_status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                  <div>
+                    <span className="text-gray-400 block text-[9px] uppercase font-bold">Semantic Match</span>
+                    <span className="font-bold text-emerald-400">{validation.semantic_match_score}%</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px] uppercase font-bold">Legal Kept</span>
+                    <span className="font-bold text-white">{validation.legal_meaning_preserved ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px] uppercase font-bold">Misinterpret Risk</span>
+                    <span className={`font-bold ${validation.risk_of_misinterpretation === 'High' ? 'text-red-400' : validation.risk_of_misinterpretation === 'Medium' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {validation.risk_of_misinterpretation}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px] uppercase font-bold">Hallucinated</span>
+                    <span className={`font-bold ${validation.added_information ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {validation.added_information ? 'Yes' : 'None'}
+                    </span>
+                  </div>
+                </div>
+                {(validation.missing_information || validation.added_information) && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-2 border-t border-white/10 text-[10px]">
+                    {validation.missing_information && (
+                      <div className="bg-white/5 border border-white/10 rounded-lg p-2">
+                        <span className="text-amber-300 font-extrabold block mb-0.5">Omitted Info:</span>
+                        <span className="text-gray-300 font-medium leading-relaxed">{validation.missing_information}</span>
+                      </div>
+                    )}
+                    {validation.added_information && (
+                      <div className="bg-white/5 border border-white/10 rounded-lg p-2">
+                        <span className="text-red-300 font-extrabold block mb-0.5">Added (Hallucinated):</span>
+                        <span className="text-gray-300 font-medium leading-relaxed">{validation.added_information}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
         </div>
@@ -249,22 +287,20 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
     savedDocs.find(d => d.id === selectedDocId) || savedDocs[0] || null
   , [selectedDocId, savedDocs]);
 
-  const allClauses = useMemo(
-    () => selectedDoc?.analyzed_clauses || selectedDoc?.clauses || [],
+  const allClauses: DynamicClause[] = useMemo(
+    () => selectedDoc?.report?.clauses || [],
     [selectedDoc]
   );
 
-  // Use index-based keys to avoid undefined/duplicate clause_id issues with old saved docs
-  const [expandedIndexes, setExpandedIndexes] = useState<Set<number>>(new Set());
+  const [prevAllClauses, setPrevAllClauses] = useState(allClauses);
+  const [expandedIndexes, setExpandedIndexes] = useState<Set<number>>(
+    new Set(allClauses.map((_, idx) => idx))
+  );
 
-  // Initialize all indexes as expanded when document or clause list changes
-  useEffect(() => {
-    if (allClauses.length > 0) {
-      setExpandedIndexes(new Set(allClauses.map((_, idx) => idx)));
-    } else {
-      setExpandedIndexes(new Set());
-    }
-  }, [selectedDocId, allClauses]);
+  if (prevAllClauses !== allClauses) {
+    setPrevAllClauses(allClauses);
+    setExpandedIndexes(new Set(allClauses.map((_, idx) => idx)));
+  }
 
   const handleExpandAll = () => {
     setExpandedIndexes(new Set(allClauses.map((_, idx) => idx)));
@@ -285,17 +321,18 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
 
   const isExpanded = (idx: number) => expandedIndexes.has(idx);
 
-  const overallBadge = selectedDoc ? getRatingBadge(selectedDoc.overall_rating || selectedDoc.verdict || 'Balanced') : null;
+  const metadata = selectedDoc?.report?.metadata;
+  const overallBadge = metadata ? getRiskBadge(metadata.overall_risk) : null;
 
   if (savedDocs.length === 0) {
     return (
       <div className="flex flex-col gap-6 w-full animate-fade-in">
         <div className="flex flex-col gap-1">
           <h2 className="font-extrabold text-2xl text-gray-900 tracking-tight">
-            AI Validation
+            AI Validation & Traceability
           </h2>
           <p className="text-xs text-gray-500 font-medium leading-relaxed">
-            Compare original agreement text against the AI's interpretation. See exactly why every clause was summarized the way it was.
+            Compare original agreement text against the LLM's interpretation. See exact evidence offsets, trigger tokens, and the self-validation score for every clause.
           </p>
         </div>
 
@@ -305,7 +342,7 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
           </div>
           <h3 className="font-extrabold text-base text-gray-900">No Saved Reports Found</h3>
           <p className="text-xs text-gray-500 max-w-md leading-relaxed font-medium">
-            Analyze and save an agreement in the <strong className="text-gray-800">T&C Decoder</strong> tab first. Once saved, you can validate the AI's reasoning here against the original legal text.
+            Run the 12-step AI pipeline and save a report first. Once saved, you can validate every clause against the original legal text with full character-level traceability.
           </p>
         </div>
       </div>
@@ -315,22 +352,20 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
   return (
     <div className="flex flex-col gap-6 w-full animate-fade-in pb-16">
 
-      {/* Header */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-brand-100 text-brand-700 uppercase tracking-wider">
-            AI Traceability & Validation
+            AI Traceability & Self-Validation
           </span>
         </div>
         <h2 className="font-extrabold text-2xl text-gray-900 tracking-tight">
-          Original Agreement vs AI Interpretation
+          Original Text vs LLM Interpretation
         </h2>
         <p className="text-xs text-gray-500 font-medium leading-relaxed">
-          See exactly how the AI read the original legal text, which exact words triggered each summary, and why every recommendation was generated.
+          See exactly which sentences and character positions anchored the LLM's dynamic summary, which trigger tokens were detected, and how the AI validated its own output for hallucinations.
         </p>
       </div>
 
-      {/* Report Selector */}
       <div className="bg-white border border-gray-200/90 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex-1 flex flex-col gap-1.5">
           <label htmlFor="select-report-validate" className="text-[10px] uppercase font-extrabold text-gray-400 tracking-wider flex items-center gap-1">
@@ -347,71 +382,73 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
           >
             {savedDocs.map((doc) => (
               <option key={doc.id} value={doc.id}>
-                {doc.companyName} ({doc.domain_category || doc.category || 'General'}) — {new Date(doc.date).toLocaleDateString()}
+                {doc.provider_title || 'Untitled'} ({doc.report?.metadata?.detected_type || doc.category || 'General'}) — {new Date(doc.date).toLocaleDateString()}
               </option>
             ))}
           </select>
         </div>
 
-        {selectedDoc && overallBadge && (
+        {selectedDoc && overallBadge && metadata && (
           <div className="flex items-center gap-2 sm:pt-4 flex-shrink-0">
             <span className={`text-xs font-extrabold px-3 py-1.5 rounded-xl border flex items-center gap-1.5 shadow-sm ${overallBadge.bg}`}>
               <overallBadge.Icon className={`w-3.5 h-3.5 ${overallBadge.color}`} />
-              {selectedDoc.overall_rating || selectedDoc.verdict}
+              Overall: {metadata.overall_risk}
             </span>
           </div>
         )}
       </div>
 
-      {selectedDoc && (
+      {selectedDoc && metadata && (
         <>
-          {/* Executive Summary Rationale Card */}
           <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col gap-4 relative overflow-hidden">
             <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-brand-500 to-indigo-500 rounded-t-2xl" />
 
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] uppercase font-extrabold text-gray-400 tracking-wider">
-                Overall Document Summary & AI Rationale
+                Document Metadata & Executive Overview
               </span>
               <h3 className="font-extrabold text-base text-gray-900">
-                {selectedDoc.companyName} — Full Overview
+                {selectedDoc.provider_title || 'Saved Document'} — {metadata.detected_type}
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              {/* AI Summary Output */}
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex flex-col gap-0.5">
+                <span className="text-[9px] uppercase font-extrabold text-gray-400 tracking-wider">Detected Type</span>
+                <p className="text-gray-900 font-extrabold">{metadata.detected_type}</p>
+                <p className="text-gray-500 text-[10px]">{metadata.classification_confidence}% confidence</p>
+              </div>
+              <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex flex-col gap-0.5">
+                <span className="text-[9px] uppercase font-extrabold text-gray-400 tracking-wider">Overall Risk</span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  {overallBadge && <overallBadge.Icon className={`w-3.5 h-3.5 ${overallBadge.color}`} />}
+                  <p className="text-gray-900 font-extrabold">{metadata.overall_risk}</p>
+                </div>
+                <p className="text-gray-500 text-[10px]">{metadata.total_clauses_analyzed} clauses</p>
+              </div>
+              <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 flex flex-col gap-0.5">
+                <span className="text-[9px] uppercase font-extrabold text-gray-400 tracking-wider">Smart Action Steps</span>
+                <p className="text-gray-900 font-extrabold">{selectedDoc.report.smart_action_steps?.length ?? 0} items</p>
+                <p className="text-gray-500 text-[10px]">LLM-generated recommendations</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-1 gap-4 text-xs">
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col gap-2">
                 <span className="font-extrabold text-gray-900 flex items-center gap-1.5">
                   <FileText className="w-3.5 h-3.5 text-brand-600" />
-                  AI Plain-English Summary:
+                  Executive Overview (Dynamic):
                 </span>
                 <p className="text-gray-700 leading-relaxed font-medium">
-                  {selectedDoc.executive_summary || selectedDoc.document_summary || selectedDoc.quickNote}
-                </p>
-              </div>
-
-              {/* Why AI generated this */}
-              <div className="bg-indigo-50/40 p-4 rounded-xl border border-indigo-100 flex flex-col gap-2">
-                <span className="font-extrabold text-indigo-950 flex items-center gap-1.5">
-                  <Lightbulb className="w-3.5 h-3.5 text-indigo-600" />
-                  Why Did the AI Generate This Summary?
-                </span>
-                <p className="text-gray-700 leading-relaxed font-medium">
-                  Because the original agreement for <strong>{selectedDoc.companyName}</strong> contains
-                  {selectedDoc.quick_matrix?.mandatory_arbitration ? ' mandatory arbitration clauses,' : ''}
-                  {selectedDoc.quick_matrix?.waives_class_action ? ' class action waivers,' : ''}
-                  {selectedDoc.quick_matrix?.sells_or_monetizes_data ? ' data monetization provisions,' : ''}
-                  {selectedDoc.quick_matrix?.auto_renewal_charges ? ' automatic renewal obligations,' : ''}
-                  {' '}and{' '}{allClauses.length} legal clause{allClauses.length !== 1 ? 's' : ''} that were extracted and evaluated for user impact.
+                  {metadata.executive_overview}
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Clause Controls Header */}
           <div className="flex items-center justify-between border-b border-gray-200 pb-3">
             <h3 className="font-extrabold text-base text-gray-900 flex items-center gap-2">
-              <span>Clause-by-Clause Evidence</span>
+              <span>Clause-by-Clause Evidence & Validation</span>
               <span className="text-[10px] font-bold text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
                 {allClauses.length} clauses
               </span>
@@ -434,19 +471,18 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
             </div>
           </div>
 
-          {/* Clause Cards */}
           <div className="flex flex-col gap-5">
             {allClauses.length === 0 ? (
               <div className="bg-white border border-gray-200 rounded-2xl p-10 text-center">
                 <FileText className="w-8 h-8 text-gray-300 mx-auto mb-3" />
                 <p className="text-sm font-semibold text-gray-500">
-                  No clause details are stored in this saved report. Re-analyze the agreement to generate full traceability data.
+                  No clause details stored in this report.
                 </p>
               </div>
             ) : (
               allClauses.map((clause, idx) => (
                 <ClauseValidationCard
-                  key={idx}
+                  key={clause.clause_id || idx}
                   clause={clause}
                   index={idx}
                   isExpanded={isExpanded(idx)}
@@ -456,11 +492,10 @@ export const CompareTool: React.FC<CompareToolProps> = ({ savedDocs }) => {
             )}
           </div>
 
-          {/* AI Validation Footer */}
           <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 flex items-start gap-3 text-gray-500">
             <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-gray-400" />
             <p className="text-[11px] font-medium leading-relaxed">
-              Every summary, recommendation, and assessment shown here was generated by the T&C Decoder AI based strictly on the original agreement text. No legal meanings were invented or assumed. Only clauses explicitly present in the original document were analyzed.
+              Every summary, recommendation, and assessment above was generated in real time by the 12-step dynamic LLM pipeline. No rule engine, no hardcoded categories, no cached mock data. Evidence offsets refer to the exact character positions in the normalized source text.
             </p>
           </div>
         </>

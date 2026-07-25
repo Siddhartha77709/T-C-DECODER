@@ -6,7 +6,7 @@ import {
   Sliders, 
   Shield, 
   Sparkles,
-  Cpu,
+  Brain,
   ChevronRight
 } from 'lucide-react';
 
@@ -14,21 +14,23 @@ interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   savedCount: number;
-  isApiConfigured: boolean;
+  processingStep?: number | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ 
   activeTab, 
   setActiveTab, 
   savedCount,
-  isApiConfigured 
+  processingStep
 }) => {
   const menuItems = [
     { id: 'analyze', name: 'Document Decoder', icon: FileSearch, desc: 'Decode contracts & agreements' },
     { id: 'saved', name: 'Saved Reports', icon: Bookmark, count: savedCount, desc: 'Archived evaluations' },
     { id: 'compare', name: 'AI Validation', icon: GitCompare, desc: 'Original agreement vs AI analysis' },
-    { id: 'settings', name: 'System Settings', icon: Sliders, desc: 'API key & compliance rules' },
+    { id: 'settings', name: 'System Settings', icon: Sliders, desc: 'Local storage & environment' },
   ];
+
+  const isProcessing = typeof processingStep === 'number' && processingStep > 0;
 
   return (
     <aside className="hidden md:flex flex-col fixed top-0 left-0 bottom-0 w-64 bg-navy-gradient border-r border-white/10 p-5 z-30 justify-between text-white shadow-sidebar">
@@ -68,16 +70,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                   </div>
                 </div>
-                {item.count !== undefined && item.count > 0 && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
-                    isActive ? 'bg-brand-500 text-white' : 'bg-white/10 text-gray-300'
-                  }`}>
-                    {item.count}
-                  </span>
-                )}
-                {isActive && (
-                  <ChevronRight className="w-3.5 h-3.5 text-brand-400 opacity-80" />
-                )}
+                <div className="flex items-center gap-1.5">
+                  {item.count !== undefined && item.count > 0 && (
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                      isActive ? 'bg-brand-500 text-white' : 'bg-white/10 text-gray-300'
+                    }`}>
+                      {item.count}
+                    </span>
+                  )}
+                  {isActive && (
+                    <ChevronRight className="w-3.5 h-3.5 text-brand-400 opacity-80" />
+                  )}
+                </div>
               </button>
             );
           })}
@@ -86,33 +90,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="flex flex-col gap-3">
         <div className={`p-3.5 rounded-xl border flex flex-col gap-2 transition-all ${
-          isApiConfigured 
-            ? 'bg-brand-950/60 border-brand-500/30' 
-            : 'bg-white/5 border-white/10'
+          isProcessing
+            ? 'bg-amber-950/60 border-amber-500/40'
+            : 'bg-brand-950/60 border-brand-500/30'
         }`}>
           <div className="flex items-center gap-2 text-xs font-bold">
-            {isApiConfigured ? (
+            {isProcessing ? (
               <>
-                <Sparkles className="w-3.5 h-3.5 text-brand-400 animate-pulse" />
-                <span className="text-brand-200">Gemini AI Active</span>
+                <Brain className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                <span className="text-amber-200">LLM Pipeline Running</span>
               </>
             ) : (
               <>
-                <Cpu className="w-3.5 h-3.5 text-gray-400" />
-                <span className="text-gray-300">Local Engine Active</span>
+                <Sparkles className="w-3.5 h-3.5 text-brand-400 animate-pulse" />
+                <span className="text-brand-200">Gemini LLM Ready</span>
               </>
             )}
           </div>
           <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
-            {isApiConfigured 
-              ? "Deep neural evaluation active for legal risk detection."
-              : "Rule engine running locally. Add API key in Settings for AI evaluation."}
+            {isProcessing
+              ? `Executing 12-step dynamic legal intelligence pipeline on uploaded document (step ${processingStep}/12).`
+              : "Deep neural LLM evaluation active — zero templates, zero hardcoded clauses, zero cached reports."}
           </p>
         </div>
         
         <div className="text-[10px] text-gray-400/70 px-1 font-medium flex items-center justify-between">
           <span>T&C Decoder Engine</span>
-          <span>v2.5 Legal AI</span>
+          <span>v3.0 Dynamic AI</span>
         </div>
       </div>
     </aside>

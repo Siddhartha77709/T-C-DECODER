@@ -12,7 +12,7 @@ import {
   CheckCircle,
   Info
 } from 'lucide-react';
-import type { SavedDocument, OverallRating } from '../types';
+import type { SavedDocument, RiskLevel } from '../types';
 
 interface SavedDocsProps {
   documents: SavedDocument[];
@@ -21,50 +21,36 @@ interface SavedDocsProps {
   onNavigateToAnalyze: () => void;
 }
 
-function getRatingBadge(rating: OverallRating | string) {
-  switch (rating) {
-    case 'High Risk':
+function getRiskBadge(level: RiskLevel | string) {
+  switch (level) {
+    case 'Critical':
+      return {
+        bg: 'bg-purple-100 text-purple-900 border-purple-300',
+        Icon: ShieldAlert,
+        color: 'text-purple-700',
+        label: 'Critical Risk'
+      };
+    case 'High':
       return {
         bg: 'bg-red-100 text-red-800 border-red-200',
         Icon: ShieldAlert,
         color: 'text-red-600',
         label: 'High Risk'
       };
-    case 'Be Careful':
-      return {
-        bg: 'bg-orange-100 text-orange-800 border-orange-200',
-        Icon: AlertTriangle,
-        color: 'text-orange-600',
-        label: 'Be Careful'
-      };
-    case 'Needs Attention':
+    case 'Medium':
       return {
         bg: 'bg-amber-100 text-amber-800 border-amber-200',
         Icon: AlertTriangle,
         color: 'text-amber-700',
         label: 'Needs Attention'
       };
-    case 'Balanced':
-      return {
-        bg: 'bg-blue-100 text-blue-800 border-blue-200',
-        Icon: Info,
-        color: 'text-blue-600',
-        label: 'Balanced'
-      };
-    case 'Mostly User Friendly':
-      return {
-        bg: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-        Icon: ShieldCheck,
-        color: 'text-emerald-600',
-        label: 'Mostly User Friendly'
-      };
-    case 'User Friendly':
+    case 'Low':
     default:
       return {
         bg: 'bg-green-100 text-green-800 border-green-200',
         Icon: CheckCircle,
         color: 'text-green-600',
-        label: 'User Friendly'
+        label: 'Low Risk'
       };
   }
 }
@@ -95,7 +81,7 @@ export const SavedDocs: React.FC<SavedDocsProps> = ({
           Saved Reports
         </h2>
         <p className="text-xs text-gray-500 font-medium leading-relaxed">
-          Archived analysis reports stored on your device. Click any report to view the full evaluation without re-analyzing.
+          Archived analysis reports stored on your device. Click any report to view the full LLM-generated evaluation without re-analyzing.
         </p>
       </div>
 
@@ -108,7 +94,7 @@ export const SavedDocs: React.FC<SavedDocsProps> = ({
             No Saved Reports Yet
           </h3>
           <p className="text-xs text-gray-500 mb-6 leading-relaxed font-medium">
-            After analyzing any agreement, click "Save Report" to archive it here for instant future access.
+            After running the 12-step AI pipeline on any agreement, click "Save Report" to archive it here for instant future access.
           </p>
           <button
             onClick={onNavigateToAnalyze}
@@ -121,10 +107,13 @@ export const SavedDocs: React.FC<SavedDocsProps> = ({
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {documents.map((doc) => {
-            const rating = doc.overall_rating || doc.verdict || 'Balanced';
-            const badge = getRatingBadge(rating);
+            const metadata = doc.report?.metadata;
+            const overallRisk: RiskLevel = metadata?.overall_risk || 'Low';
+            const badge = getRiskBadge(overallRisk);
             const BadgeIcon = badge.Icon;
-            const clauseCount = doc.analyzed_clauses?.length || 0;
+            const clauseCount = metadata?.total_clauses_analyzed ?? doc.report?.clauses?.length ?? 0;
+            const wordCount = (doc.documentText || '').split(/\s+/).filter(Boolean).length;
+            const estRead = Math.max(1, Math.ceil(wordCount / 200));
 
             return (
               <div
@@ -132,26 +121,24 @@ export const SavedDocs: React.FC<SavedDocsProps> = ({
                 onClick={() => onSelect(doc)}
                 className="bg-surface border border-gray-200/80 rounded-2xl p-5 shadow-sm card-hover cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-4 group"
               >
-                {/* Left: Info section */}
                 <div className="flex-1 flex flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-extrabold text-base text-gray-900 tracking-tight group-hover:text-brand-600 transition-colors">
-                      {doc.companyName}
+                      {doc.provider_title || 'Untitled Document'}
                     </h3>
 
-                    {/* Descriptive rating badge — NO percentages */}
                     <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${badge.bg}`}>
                       <BadgeIcon className={`w-3 h-3 ${badge.color}`} />
                       {badge.label}
                     </span>
 
                     <span className="text-[10px] text-gray-500 font-bold bg-gray-100 px-2.5 py-0.5 rounded-full border border-gray-200">
-                      {doc.category || doc.domain_category || 'General'}
+                      {metadata?.detected_type || doc.category || 'General Legal'}
                     </span>
                   </div>
 
                   <p className="text-xs text-gray-600 font-medium line-clamp-2 leading-relaxed">
-                    {doc.executive_summary || doc.quickNote}
+                    {metadata?.executive_overview || 'No overview available.'}
                   </p>
 
                   <div className="flex flex-wrap items-center gap-4 text-[11px] text-gray-400 font-semibold mt-1">
@@ -161,7 +148,7 @@ export const SavedDocs: React.FC<SavedDocsProps> = ({
                     </div>
                     <div className="flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5" />
-                      <span>{doc.estimatedReadTime}</span>
+                      <span>{estRead} min read</span>
                     </div>
                     {clauseCount > 0 && (
                       <div className="flex items-center gap-1.5">
@@ -169,10 +156,15 @@ export const SavedDocs: React.FC<SavedDocsProps> = ({
                         <span>{clauseCount} clauses analyzed</span>
                       </div>
                     )}
+                    {typeof metadata?.classification_confidence === 'number' && (
+                      <div className="flex items-center gap-1.5">
+                        <Info className="w-3.5 h-3.5" />
+                        <span>{metadata.classification_confidence}% classification confidence</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Right: Action column */}
                 <div className="flex items-center gap-3 border-t md:border-t-0 pt-3 md:pt-0 justify-between md:justify-end">
                   <button
                     onClick={(e) => {

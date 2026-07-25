@@ -1,530 +1,1080 @@
-import type { AnalysisResult, AnalyzedClause, QuickMatrix, ActionableSuggestion, RiskLevelLabel } from './types';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import type {
+  LegalAnalysisReport,
+  DynamicClause,
+  ClauseEvidence,
+  ValidationReport,
+  SmartActionStep,
+  OCRMetrics,
+  RiskLevel,
+  DocumentClassificationType,
+  ExecutiveOverview,
+  ClauseInterpretation,
+  OriginalEvidence,
+  SemanticValidationPanel
+} from './types';
+import { verifyFileConsistency } from './fileExtractor';
 
-const MANDATORY_DISCLAIMER = "T&C Decoder provides automated AI-generated summaries for informational purposes only. This report does not constitute professional legal advice. Please consult a qualified legal professional for specific concerns.";
+const MANDATORY_DISCLAIMER =
+  "T&C Decoder provides automated AI-generated summaries for informational purposes only. This report does not constitute professional legal advice. Please consult a qualified legal professional for specific concerns.";
 
-// Extract company name intelligently
-function extractCompanyName(text: string, userProvidedTitle?: string): string {
-  if (userProvidedTitle && userProvidedTitle.trim().length > 0) {
-    return userProvidedTitle.trim();
-  }
+const REJECTED_NON_LEGAL_NOTICE =
+  "This document does not appear to be a legal agreement. Please upload a Terms of Service, Terms & Conditions, Privacy Policy or another supported legal document.";
 
-  const knownProviders: { pattern: RegExp; name: string }[] = [
-    { pattern: /\bgoogle\b/i, name: 'Google' },
-    { pattern: /\bmeta\b|\bfacebook\b/i, name: 'Meta' },
-    { pattern: /\bamazon\b|\baws\b/i, name: 'Amazon' },
-    { pattern: /\bapple\b/i, name: 'Apple' },
-    { pattern: /\bmicrosoft\b/i, name: 'Microsoft' },
-    { pattern: /\bnetflix\b/i, name: 'Netflix' },
-    { pattern: /\bspotify\b/i, name: 'Spotify' },
-    { pattern: /\btiktok\b/i, name: 'TikTok' },
-    { pattern: /\btwitter\b|\bx\.com\b/i, name: 'X (Twitter)' },
-    { pattern: /\blinkedin\b/i, name: 'LinkedIn' },
-    { pattern: /\bslack\b/i, name: 'Slack' },
-    { pattern: /\bzoom\b/i, name: 'Zoom' },
-    { pattern: /\bdropbox\b/i, name: 'Dropbox' },
-    { pattern: /\bairbnb\b/i, name: 'Airbnb' },
-    { pattern: /\buber\b/i, name: 'Uber' },
-    { pattern: /\bpaypal\b/i, name: 'PayPal' },
-    { pattern: /\bshopify\b/i, name: 'Shopify' },
-    { pattern: /\badobe\b/i, name: 'Adobe' },
-    { pattern: /\bsalesforce\b/i, name: 'Salesforce' },
-    { pattern: /\bgithub\b/i, name: 'GitHub' },
-  ];
-
-  for (const provider of knownProviders) {
-    if (provider.pattern.test(text)) {
-      return provider.name;
-    }
-  }
-
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  if (lines.length > 0) {
-    const cleanLine = lines[0]
-      .replace(/(terms of service|terms of use|privacy policy|agreement|terms and conditions|terms|T&C|LLC|Inc\.|Ltd\.)/gi, '')
-      .trim();
-    if (cleanLine.length > 2 && cleanLine.length < 50) {
-      return cleanLine;
-    }
-  }
-
-  return "Unknown Service";
-}
-
-// Extensive legal clause rule definitions with full body sentence extraction (NO HEADERS)
-interface ClauseRule {
-  title: string;
-  risk_level: RiskLevelLabel;
-  keywords: RegExp[];
-  triggers: string[];
-  summary: string;
-  rationale: string;
-  impact: string;
-  recommendation: string;
-  recommendationRationale: string;
-}
-
-const CLAUSE_PATTERNS: ClauseRule[] = [
-  {
-    title: "Arbitration & Class Action Waiver",
-    risk_level: 'High Risk',
-    keywords: [/class\s+action/i, /waive.*class/i, /binding\s+arbitration/i, /arbitrate/i, /individual\s+arbitration/i],
-    triggers: ["binding arbitration", "class action waiver", "individual capacity"],
-    summary: "Disputes must be resolved individually through private binding arbitration rather than class action lawsuits in public court.",
-    rationale: "The contract language waives constitutional court access and mandates private arbitration for all claims.",
-    impact: "You cannot join with other affected users in a group lawsuit if a data breach or system failure occurs.",
-    recommendation: "Check the agreement for a 30-day written arbitration opt-out address.",
-    recommendationRationale: "Submitting a timely opt-out letter preserves your right to court proceedings if disputes arise."
-  },
-  {
-    title: "AI Model Training & Telemetry License",
-    risk_level: 'High Risk',
-    keywords: [/train.*ai/i, /machine\s+learning/i, /telemetry/i, /monetize.*data/i, /perpetual.*license/i, /royalty.?free.*license/i],
-    triggers: ["machine learning", "AI training", "perpetual license", "telemetry"],
-    summary: "The provider collects session logs and uploaded content to train commercial machine learning and artificial intelligence models.",
-    rationale: "The agreement grants a worldwide, perpetual license to process user telemetry and uploaded content for AI model development.",
-    impact: "Your usage patterns and interactions may permanently inform AI features without financial compensation.",
-    recommendation: "Review privacy settings after account creation to disable optional telemetry sharing.",
-    recommendationRationale: "Data sharing toggles are active by default and require manual opt-out."
-  },
-  {
-    title: "Unilateral Account Termination",
-    risk_level: 'High Risk',
-    keywords: [/terminat.*without.*notice/i, /suspend.*sole.*discretion/i, /terminat.*at.*any\s+time/i, /close\s+your\s+account/i],
-    triggers: ["terminate at any time", "sole discretion", "without notice"],
-    summary: "The company reserves the right to suspend or terminate account access at any time at its sole discretion.",
-    rationale: "The clause grants the provider absolute permission to revoke account access without advance written warning.",
-    impact: "You could abruptly lose access to stored documents, purchase history, and account features.",
-    recommendation: "Maintain independent local backups of critical files stored on the platform.",
-    recommendationRationale: "Immediate account suspension cuts off access to platform-stored files."
-  },
-  {
-    title: "Strict Billing Renewal & Cancellation Window",
-    risk_level: 'Needs Attention',
-    keywords: [/automatic.*renew/i, /auto.?renew/i, /renew\s+automatically/i, /recurring\s+billing/i, /30\s+days/i],
-    triggers: ["automatically renew", "recurring billing", "advance notice"],
-    summary: "Subscriptions auto-renew each billing period unless canceled within the required advance notice window.",
-    rationale: "The text specifies recurring billing and sets a fixed advance deadline to stop subsequent cycle charges.",
-    impact: "Your payment method will be charged automatically if cancellation is requested past the deadline.",
-    recommendation: "Set a calendar reminder 7 days before your subscription renewal date.",
-    recommendationRationale: "Advance reminders ensure adequate time to cancel before recurring charges process."
-  },
-  {
-    title: "Limitation of Financial Liability",
-    risk_level: 'Needs Attention',
-    keywords: [/limitation\s+of\s+liability/i, /shall\s+not\s+exceed/i, /maximum.*liability/i, /fifty\s+dollars/i, /\$50/i],
-    triggers: ["shall not exceed", "maximum liability", "as is"],
-    summary: "The company caps its total monetary liability for service disruptions or damages to a small fixed amount.",
-    rationale: "The terms establish a strict legal ceiling on financial damages recoverable by users.",
-    impact: "If service outages cause business losses, legal recovery is limited to the capped amount.",
-    recommendation: "Avoid relying exclusively on the service for unbacked business-critical operations.",
-    recommendationRationale: "Financial damages caps protect the provider against major loss claims."
-  },
-  {
-    title: "Retention of Content Ownership",
-    risk_level: 'Low Risk',
-    keywords: [/you\s+own.*content/i, /retain.*ownership/i, /you\s+retain\s+all\s+rights/i],
-    triggers: ["retain ownership", "you own your content"],
-    summary: "You retain full copyright and intellectual property rights over all original materials uploaded to the service.",
-    rationale: "The text explicitly confirms user ownership of uploaded content.",
-    impact: "Your original creative or proprietary assets remain your legal property.",
-    recommendation: "Maintain standard credential security when uploading original work.",
-    recommendationRationale: "Your intellectual property rights are protected under this provision."
-  }
+const PIPELINE_STEP_NAMES = [
+  "Receive & Extract Text",
+  "Normalize & Display Preview",
+  "File Consistency Check",
+  "Document Classification & Input Validation",
+  "Dynamic Document Segmentation",
+  "Dynamic Clause Title Generation",
+  "Plain-English Summarization",
+  "Real-World Impact Analysis",
+  "Actionable Recommendations",
+  "Risk Rating",
+  "Traceability & Evidence Mapping",
+  "AI Semantic Validation Check"
 ];
 
-// Clean text to extract pure legal body sentence (STRICT NO HEADERS RULE)
-function cleanBodySentence(rawSentence: string): string {
-  let cleaned = rawSentence.trim();
-  // Strip uppercase section headers at start of sentence, e.g. "1. LICENSE AND RESTRICTIONS. Zoom hereby..." -> "Zoom hereby..."
-  cleaned = cleaned.replace(/^[0-9A-Z\s.#\-_:]*(?:TERMS|LICENSE|RENEWAL|ARBITRATION|LIMITATION|DISCLAIMER|MEMBERSHIP|BILLING|PRIVACY|DATA|NOTICE|RIGHTS|WARRANTIES|TERMINATION|SERVICES|RESTRICTIONS)[A-Z0-9\s.#\-_:]*\.\s*/i, '');
-  cleaned = cleaned.replace(/^[0-9A-Z]{2,}(?:\s+[0-9A-Z]{2,})*\.\s*/, '');
-  return cleaned || rawSentence;
+export function getPipelineStepName(step: number): string {
+  return PIPELINE_STEP_NAMES[step - 1] || `Step ${step}`;
 }
 
-// Contextual clause extraction logic for local fallback
-function extractClausesFromText(text: string): AnalyzedClause[] {
-  const analyzed_clauses: AnalyzedClause[] = [];
-  const matchedTitles = new Set<string>();
-  let clauseIdCounter = 1;
+export function getPipelineStepDescription(step: number): string {
+  const descriptions: Record<number, string> = {
+    1: "Extracting raw text from uploaded document source",
+    2: "Standardizing formatting and preparing character-for-character preview",
+    3: "Verifying Uploaded File Content == Extracted Text == LLM Input",
+    4: "Classifying document type and enforcing legal agreement guardrail",
+    5: "Splitting document into logical semantic sections",
+    6: "Generating unique clause titles from actual section contents",
+    7: "Rewriting clauses at Grade 7-8 reading level without legal jargon",
+    8: "Assessing real-world practical consequences for ordinary users",
+    9: "Generating context-specific actionable recommendations",
+    10: "Classifying risk level with justification",
+    11: "Mapping verbatim evidence with character index positions",
+    12: "Validating AI summary against source for semantic accuracy"
+  };
+  return descriptions[step] || "Processing";
+}
 
-  const paragraphs = text
-    .split(/(?:\n\s*\n|\n(?=[0-9A-Z]\.|\bSection\b|\bArticle\b))/i)
-    .map(p => p.trim())
-    .filter(p => p.length > 15);
+export { MANDATORY_DISCLAIMER, REJECTED_NON_LEGAL_NOTICE };
 
-  const sentences = text
-    .split(/[.!?\n]+/)
-    .map(s => s.trim())
-    .filter(s => s.length > 10);
+export const INVALID_DOCUMENT_TYPE_WARNING =
+  "Invalid Document Type: Please upload or paste a valid Terms & Conditions or Legal Agreement document to analyze.";
 
-  for (const para of paragraphs) {
-    for (const rule of CLAUSE_PATTERNS) {
-      if (matchedTitles.has(rule.title)) continue;
-      if (rule.keywords.some(regex => regex.test(para))) {
-        matchedTitles.add(rule.title);
+const LEGAL_DOCUMENT_SIGNAL_KEYWORDS: string[] = [
+  'terms of service', 'terms and conditions', 'terms & conditions', 'terms of use',
+  'privacy policy', 'privacy statement', 'data protection policy', 'cookie policy',
+  'saas agreement', 'software as a service', 'service level agreement',
+  'non-disclosure agreement', 'confidentiality agreement', 'nda',
+  'employment agreement', 'employment contract', 'offer letter',
+  'rental agreement', 'lease agreement', 'tenancy agreement', 'lease',
+  'consumer contract', 'purchase agreement', 'sales agreement', 'terms of sale',
+  'legal notice', 'legal agreement', 'user agreement', 'end user license agreement', 'eula',
+  'acceptable use policy', 'community guidelines',
+  'arbitration', 'governing law', 'jurisdiction', 'indemnification', 'indemnify', 'liability',
+  'hereby agree', 'the parties', 'binding agreement', 'third party beneficiaries',
+  'intellectual property', 'copyright', 'trademark',
+  'termination', 'terminate', 'confidentiality', 'data processing', 'cookies',
+  'disclaimer of warranties', 'limitation of liability', 'force majeure',
+  'entire agreement', 'severability', 'assignment', 'warranties'
+];
 
-        const rawSentence = sentences.find(s =>
-          rule.keywords.some(regex => regex.test(s))
-        ) || para;
+const NON_LEGAL_SIGNAL_KEYWORDS: string[] = [
+  'dear sir', 'dear madam', 'cv', 'curriculum vitae', 'resume',
+  'meeting minutes', 'agenda', 'to-do list', 'grocery list', 'shopping list',
+  'poem', 'short story', 'the poem', 'chapter 1', 'once upon a time',
+  'weather forecast', 'news article', 'recipe', 'ingredients:',
+  'flight itinerary', 'hotel confirmation', 'invoice',
+  'best regards', 'yours sincerely', 'yours faithfully',
+  'homework', 'assignment', 'exam',
+  'devops roadmap', 'roadmap', 'sprint plan', 'release plan',
+  'technical guide', 'design doc', 'rfc', 'architecture',
+  'table of contents', 'chapter', 'exercise', 'quiz',
+  'product roadmap', 'quarterly roadmap', 'engineering roadmap',
+  'technical specification', 'api documentation', 'developer guide',
+  'skills:', 'experience:', 'education:', 'work history',
+  'executive summary', 'business plan', 'marketing plan'
+];
 
-        const bodySentence = cleanBodySentence(rawSentence);
+function countWordHits(text: string, keywords: string[]): number {
+  const lower = text.toLowerCase();
+  let hits = 0;
+  for (const kw of keywords) {
+    if (lower.includes(kw)) hits++;
+  }
+  return hits;
+}
 
-        const matchedTriggers = rule.triggers.filter(t => new RegExp(t, 'i').test(bodySentence));
-        if (matchedTriggers.length === 0) matchedTriggers.push(rule.triggers[0] || rule.title);
+export function clientSideLooksLikeLegalDocument(text: string): { ok: boolean; reason?: string } {
+  const cleaned = (text || '').trim();
+  if (!cleaned) return { ok: false, reason: 'Empty text provided.' };
 
-        analyzed_clauses.push({
-          clause_id: clauseIdCounter++,
-          clause_title: rule.title,
-          risk_level: rule.risk_level,
-          overall_clause_assessment: rule.risk_level,
-          exact_original_wording: bodySentence.trim(),
-          exact_verbatim_quote: bodySentence.trim(),
-          trigger_words: matchedTriggers,
-          highlighted_evidence: matchedTriggers.join(', '),
-          plain_english_summary: rule.summary,
-          plain_english_translation: rule.summary,
-          interpretation_rationale: rule.rationale,
-          why_ai_summarized: rule.rationale,
-          recommendation: rule.recommendation,
-          recommendation_rationale: rule.recommendationRationale,
-          why_recommended: rule.recommendationRationale,
-          user_impact: rule.impact,
-          potential_user_impact: rule.impact
+  const words = cleaned.split(/\s+/).filter(Boolean).length;
+  if (words < 40) return { ok: false, reason: 'Document too short (< 40 words) to validate as legal agreement.' };
+
+  const legalHits = countWordHits(cleaned, LEGAL_DOCUMENT_SIGNAL_KEYWORDS);
+  const nonLegalHits = countWordHits(cleaned, NON_LEGAL_SIGNAL_KEYWORDS);
+
+  if (nonLegalHits >= 1 && legalHits === 0) return { ok: false, reason: 'Document appears to be non-legal content.' };
+  if (legalHits >= 2 && legalHits > nonLegalHits) return { ok: true };
+  if (nonLegalHits > 0 && nonLegalHits > legalHits) return { ok: false, reason: 'Document appears to be non-legal content.' };
+  if (legalHits >= 3) return { ok: true };
+  if (nonLegalHits >= 1 && legalHits === 0) return { ok: false, reason: 'Document appears to be non-legal content.' };
+
+  return { ok: false, reason: 'AMBIGUOUS' };
+}
+
+export async function quickValidateLegalDocument(
+  text: string,
+  onPipelineStep?: (step: number) => void
+): Promise<{ ok: boolean; reason?: string }> {
+  const fast = clientSideLooksLikeLegalDocument(text);
+  if (fast.ok) return { ok: true };
+  if (fast.reason && fast.reason !== 'AMBIGUOUS') return { ok: false, reason: fast.reason };
+
+  if (!GEMINI_API_KEY || !GEMINI_API_KEY.trim()) {
+    return { ok: false, reason: 'Ambiguous content classification and no Gemini API key configured.' };
+  }
+
+  const apiKey = GEMINI_API_KEY.trim();
+
+  const validationPrompt = `Answer with ONLY a JSON object like: {"is_legal_agreement": true_or_boolean, "justification": "one short sentence"}.
+Classify the following text snippet. Return is_legal_agreement = TRUE only if the text appears to be a Terms of Service, Terms & Conditions, Privacy Policy, SaaS Agreement, NDA, Employment Contract, Consumer Contract, Rental/Lease Agreement, Legal Notice, or other legally binding user-to-company or party-to-party contract.
+Return FALSE for personal letters, resumes, essays, fiction, recipes, homework, meeting minutes, emails, news articles, shopping lists, poetry, invoices, flight itineraries, travel confirmations, or any non-legal text.
+
+TEXT SNIPPET (first 3500 chars):
+"""${(text || '').trim().slice(0, 3500)}"""
+`;
+
+  firePipelineStep(4, onPipelineStep);
+
+  try {
+    const sdkResult = await generateContentWithSdkRetry(
+      apiKey,
+      validationPrompt,
+      {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+        topP: 0.95,
+        maxOutputTokens: 256,
+      },
+      'quickValidateLegalDocument'
+    );
+
+    const outputText = sdkResult?.response?.text() || '';
+    if (!outputText || typeof outputText !== 'string') {
+      return { ok: true, reason: 'Pre-validation returned empty response; proceeding to full analysis.' };
+    }
+    const cleaned = outputText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    let parsed: { is_legal_agreement?: boolean; justification?: string } = {};
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const fallbackBool = cleaned.toLowerCase().includes('true') && !cleaned.toLowerCase().includes('"is_legal_agreement": false');
+      return {
+        ok: fallbackBool,
+        reason: fallbackBool ? 'Classification ambiguous; defaulting to proceed.' : 'Classification parse failure; blocking as unsafe.'
+      };
+    }
+
+    const isLegal = parsed.is_legal_agreement === true;
+    return {
+      ok: isLegal,
+      reason: isLegal ? (parsed.justification || 'Classification passed.') : (parsed.justification || 'Document classified as non-legal.')
+    };
+  } catch (err) {
+    if (err instanceof Error) {
+      const msg = err.message || '';
+      if (/429|rate.?limit|RESOURCE_EXHAUSTED/i.test(msg)) {
+        console.warn('[Gemini SDK] quickValidateLegalDocument: rate-limited, allowing pipeline to proceed to full analysis.', {
+          model: GEMINI_MODEL,
+          rawError: err,
+        });
+        return { ok: true, reason: 'Pre-validation skipped due to API rate limits; proceeding to full analysis.' };
+      }
+      if (/401|403|authentication|api.?key|permission/i.test(msg)) {
+        console.error('[Gemini SDK] quickValidateLegalDocument auth failure.', {
+          model: GEMINI_MODEL,
+          rawError: err,
+        });
+        throw err;
+      }
+      if (/404|not.?found/i.test(msg)) {
+        console.error('[Gemini SDK] quickValidateLegalDocument 404 model failure.', {
+          model: GEMINI_MODEL,
+          rawError: err,
+        });
+        throw err;
+      }
+      console.warn('[Gemini SDK] quickValidateLegalDocument transient API error, allowing full analysis to attempt.', {
+        model: GEMINI_MODEL,
+        rawError: err,
+      });
+      return { ok: true, reason: 'Pre-validation inconclusive due to API error; proceeding to full analysis.' };
+    }
+    throw new Error(`Pre-validation failed: ${String(err)}`);
+  }
+}
+
+function validateClauseRiskLevel(value: unknown): RiskLevel {
+  if (value === "Critical" || value === "High" || value === "Medium" || value === "Low") {
+    return value as RiskLevel;
+  }
+  return "Low";
+}
+
+function validateMisinterpretationRisk(value: unknown): ValidationReport["risk_of_misinterpretation"] {
+  if (value === "High" || value === "Medium" || value === "Low") {
+    return value as ValidationReport["risk_of_misinterpretation"];
+  }
+  return "Low";
+}
+
+function validateDetectedType(value: unknown): DocumentClassificationType {
+  const validTypes: DocumentClassificationType[] = [
+    'Terms of Service',
+    'Privacy Policy',
+    'SaaS Agreement',
+    'Employment Contract',
+    'NDA',
+    'Consumer Contract',
+    'Rental Agreement',
+    'Legal Notice',
+    'Other Legal Agreement',
+    'Not a Legal Agreement'
+  ];
+  if (typeof value === 'string' && validTypes.includes(value as DocumentClassificationType)) {
+    return value as DocumentClassificationType;
+  }
+  return 'Other Legal Agreement';
+}
+
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+interface RawOriginalEvidence {
+  exact_quote?: string;
+  char_start?: number;
+  char_end?: number;
+  trigger_words?: string[];
+}
+
+interface RawClauseInterpretation {
+  plain_english_summary?: string;
+  why_it_matters?: string;
+  actionable_recommendation?: string;
+  worst_case_impact?: string;
+  risk_justification?: string;
+}
+
+interface RawSemanticValidationPanel {
+  semantic_match_percent?: number;
+  legal_meaning_kept?: boolean;
+  misinterpretation_risk?: string;
+  hallucinated_content?: string;
+}
+
+interface RawClauseEvidence {
+  original_legal_sentence?: string;
+  char_start?: number;
+  char_end?: number;
+  trigger_words?: string[];
+}
+
+interface RawValidationReport {
+  semantic_match_score?: number;
+  legal_meaning_preserved?: boolean;
+  missing_information?: string | string[] | null;
+  added_information?: string | string[] | null;
+  risk_of_misinterpretation?: string;
+  validation_status?: string;
+}
+
+interface RawDynamicClause {
+  clause_id?: string;
+  dynamic_title?: string;
+  plain_english_summary?: string;
+  why_it_matters?: string;
+  recommendation?: string;
+  potential_user_impact?: string;
+  risk_level?: string;
+  risk_explanation?: string;
+  evidence?: RawClauseEvidence;
+  validation?: RawValidationReport;
+  clause_title?: string;
+  risk_rating?: string;
+  original_evidence?: RawOriginalEvidence;
+  interpretation?: RawClauseInterpretation;
+  semantic_validation?: RawSemanticValidationPanel;
+}
+
+interface RawSmartActionStep {
+  action_title?: string;
+  reasoning?: string;
+}
+
+interface RawExecutiveOverview {
+  bottom_line?: string;
+  top_key_takeaways?: string[];
+}
+
+interface RawAnalysisMetadata {
+  detected_type?: string;
+  classification_confidence?: number;
+  overall_risk?: string;
+  executive_overview?: string;
+  total_clauses_analyzed?: number;
+  executive?: RawExecutiveOverview;
+  overall_risk_rating?: string;
+}
+
+interface RawReport {
+  metadata?: RawAnalysisMetadata;
+  smart_action_steps?: RawSmartActionStep[];
+  clauses?: RawDynamicClause[];
+  executive_overview?: RawExecutiveOverview;
+  overall_risk_rating?: string;
+}
+
+declare const process: {
+  env: {
+    GEMINI_API_KEY?: string;
+  };
+};
+
+const GEMINI_API_KEY = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || '';
+const RETRY_MAX_ATTEMPTS = 4;
+const RETRY_WAIT_MS = 4000;
+const GEMINI_MODEL = 'gemini-3.6-flash';
+const CLAUSE_BATCH_CONCURRENCY = 3;
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>(r => setTimeout(r, ms));
+}
+
+function retryBackoffMs(attempt: number): number {
+  const multiplier = 2 ** Math.max(0, attempt - 1);
+  return RETRY_WAIT_MS * multiplier;
+}
+
+function firePipelineStep(step: number, onPipelineStep?: (step: number) => void): void {
+  if (onPipelineStep) onPipelineStep(step);
+}
+
+function isSdkError429(err: unknown): boolean {
+  if (!err) return false;
+  const asErr = err as { status?: number; message?: string; code?: number };
+  if (asErr.status === 429) return true;
+  if (asErr.code === 429) return true;
+  if (typeof asErr.message === 'string' && /429|RESOURCE_EXHAUSTED|rate.?limit/i.test(asErr.message)) return true;
+  return false;
+}
+
+function isSdkError404(err: unknown): boolean {
+  if (!err) return false;
+  const asErr = err as { status?: number; message?: string; code?: number };
+  if (asErr.status === 404) return true;
+  if (asErr.code === 404) return true;
+  if (typeof asErr.message === 'string' && /404|not.?found/i.test(asErr.message)) return true;
+  return false;
+}
+
+function isSdkErrorAuth(err: unknown): boolean {
+  if (!err) return false;
+  const asErr = err as { status?: number; message?: string; code?: number };
+  if (asErr.status === 401 || asErr.status === 403) return true;
+  if (asErr.code === 401 || asErr.code === 403) return true;
+  if (typeof asErr.message === 'string' && /401|403|unauthorized|permission|authentication|api.?key/i.test(asErr.message)) return true;
+  return false;
+}
+
+function maskedKey(key: string): string {
+  const k = key || '';
+  if (k.length <= 8) return '***';
+  return `${k.slice(0, 4)}***${k.slice(-4)}`;
+}
+
+function createGenAIClient(apiKey: string): GoogleGenerativeAI {
+  const safeKey = (apiKey || '').trim();
+  if (!safeKey) {
+    const errMsg = 'Gemini API key is not configured in the application environment.';
+    console.error('[Gemini SDK] Abort: empty API key.', {
+      model: GEMINI_MODEL,
+      keyProvided: !!safeKey,
+    });
+    throw new Error(errMsg);
+  }
+  return new GoogleGenerativeAI(safeKey);
+}
+
+async function generateContentWithSdkRetry(
+  apiKey: string,
+  promptText: string,
+  generationConfig: {
+    responseMimeType?: string;
+    temperature?: number;
+    topP?: number;
+    maxOutputTokens?: number;
+  },
+  contextLabel: string
+): Promise<ReturnType<ReturnType<GoogleGenerativeAI["getGenerativeModel"]>["generateContent"]>> {
+  const safeKey = (apiKey || '').trim();
+  const genAI = createGenAIClient(safeKey);
+  const model = genAI.getGenerativeModel({
+    model: GEMINI_MODEL,
+    generationConfig: {
+      responseMimeType: generationConfig.responseMimeType,
+      temperature: generationConfig.temperature,
+      topP: generationConfig.topP,
+      maxOutputTokens: generationConfig.maxOutputTokens,
+    },
+  });
+
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      const result = await model.generateContent(promptText);
+      const resp = result?.response;
+      const promptFeedback = (resp as unknown as { promptFeedback?: { blockReason?: string } } | undefined)?.promptFeedback;
+      if (promptFeedback?.blockReason) {
+        console.warn(`[Gemini SDK] ${contextLabel} prompt blocked on attempt ${attempt}`, {
+          model: GEMINI_MODEL,
+          context: contextLabel,
+          blockReason: promptFeedback.blockReason,
+          keyMasked: maskedKey(safeKey),
         });
       }
-    }
-  }
+      return result;
+    } catch (err) {
+      lastError = err;
 
-  // Fallback for general contracts
-  if (analyzed_clauses.length === 0 && paragraphs.length > 0) {
-    for (let i = 0; i < Math.min(paragraphs.length, 5); i++) {
-      const p = paragraphs[i];
-      if (p.length < 20) continue;
-
-      let title = "General Terms & Provisions";
-      let risk: RiskLevelLabel = 'Needs Attention';
-
-      const firstLine = p.split('\n')[0].replace(/^[0-9#.*-\s]+/, '').trim();
-      if (firstLine.length > 3 && firstLine.length < 60) {
-        title = firstLine;
-      } else {
-        title = `Section ${i + 1} Terms`;
-      }
-
-      if (/terminate|cancel|liability|indemnify|disclaim/i.test(p)) {
-        risk = 'Be Careful';
-      } else if (/license|rights|modify|update|privacy/i.test(p)) {
-        risk = 'Needs Attention';
-      } else {
-        risk = 'Low Risk';
-      }
-
-      const rawSentence = p.split('.')[0] + '.' || p;
-      const bodySentence = cleanBodySentence(rawSentence);
-
-      analyzed_clauses.push({
-        clause_id: clauseIdCounter++,
-        clause_title: title,
-        risk_level: risk,
-        overall_clause_assessment: risk,
-        exact_original_wording: bodySentence.trim(),
-        exact_verbatim_quote: bodySentence.trim(),
-        trigger_words: [title],
-        highlighted_evidence: title,
-        plain_english_summary: `Establishes standard terms regarding ${title.toLowerCase()}.`,
-        plain_english_translation: `Establishes standard terms regarding ${title.toLowerCase()}.`,
-        interpretation_rationale: `Derived from Section ${i + 1} defining user obligations and operational guidelines.`,
-        why_ai_summarized: `Derived from Section ${i + 1} defining user obligations and operational guidelines.`,
-        recommendation: "Review this section to ensure compliance with operational guidelines.",
-        recommendation_rationale: "Understanding contractual terms prevents unexpected policy issues.",
-        why_recommended: "Understanding contractual terms prevents unexpected policy issues.",
-        user_impact: "Defines standard operational requirements and boundaries for service usage.",
-        potential_user_impact: "Defines standard operational requirements and boundaries for service usage."
+      const urlHint = `(SDK-managed: models/${GEMINI_MODEL}:generateContent via @google/generative-ai)`;
+      console.error(`[Gemini SDK] ${contextLabel} attempt ${attempt}/${RETRY_MAX_ATTEMPTS} FAILED`, {
+        model: GEMINI_MODEL,
+        context: contextLabel,
+        attempt,
+        maxAttempts: RETRY_MAX_ATTEMPTS,
+        endpointUrlHint: urlHint,
+        keyMasked: maskedKey(safeKey),
+        errorObject: err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorStack: err instanceof Error ? err.stack : undefined,
       });
+
+      if (isSdkError404(err)) {
+        const msg = `Gemini API endpoint returned HTTP 404 for model '${GEMINI_MODEL}'. Please verify model name is a valid published Gemini model identifier. [Endpoint: ${urlHint}]`;
+        console.error('[Gemini SDK] 404 FATAL — aborting retries.', {
+          model: GEMINI_MODEL,
+          endpointUrlHint: urlHint,
+          rawError: err,
+          keyMasked: maskedKey(safeKey),
+        });
+        throw new Error(msg);
+      }
+      if (isSdkErrorAuth(err)) {
+        const msg = 'Gemini API authentication failed. Please verify the environment configuration.';
+        console.error('[Gemini SDK] AUTH FATAL — aborting retries.', {
+          model: GEMINI_MODEL,
+          rawError: err,
+          keyMasked: maskedKey(safeKey),
+        });
+        throw new Error(msg);
+      }
+      if (isSdkError429(err)) {
+        if (attempt < RETRY_MAX_ATTEMPTS) {
+          const wait = retryBackoffMs(attempt);
+          console.warn(`[Gemini SDK] ${contextLabel} hit 429 rate limit. Retrying in ${wait}ms ...`, {
+            model: GEMINI_MODEL,
+            attempt,
+            nextRetryAfterMs: wait,
+            keyMasked: maskedKey(safeKey),
+          });
+          await delay(wait);
+          continue;
+        }
+        const msg = `Gemini API rate limit exceeded after ${RETRY_MAX_ATTEMPTS} retries (429 RESOURCE_EXHAUSTED). Please wait 1-2 minutes and try again.`;
+        console.error('[Gemini SDK] Rate limit exhausted — aborting retries.', {
+          model: GEMINI_MODEL,
+          rawError: err,
+          attempts: RETRY_MAX_ATTEMPTS,
+          keyMasked: maskedKey(safeKey),
+        });
+        throw new Error(msg);
+      }
+
+      if (attempt < RETRY_MAX_ATTEMPTS) {
+        const wait = retryBackoffMs(attempt);
+        console.warn(`[Gemini SDK] ${contextLabel} transient error on attempt ${attempt}. Retrying in ${wait}ms ...`, {
+          model: GEMINI_MODEL,
+          attempt,
+          nextRetryAfterMs: wait,
+          rawError: err,
+          keyMasked: maskedKey(safeKey),
+        });
+        await delay(wait);
+        continue;
+      }
+      throw err;
     }
   }
-
-  return analyzed_clauses;
+  if (lastError instanceof Error) throw lastError;
+  throw new Error(`Request to Gemini SDK failed after retries. (context=${contextLabel})`);
 }
 
-// Local fallback evaluation engine
-export function analyzeDocumentLocally(
+export async function analyzeDocumentWithLLM(
   text: string,
   userProviderTitle?: string,
-  userCategory?: string
-): AnalysisResult {
-  const provider_title = extractCompanyName(text, userProviderTitle);
-  const words = text.split(/\s+/).filter(w => w.length > 0);
-  const word_count = words.length;
-  const estimated_read_time_minutes = Math.max(1, Math.ceil(word_count / 220));
-
-  const analyzed_clauses = extractClausesFromText(text);
-
-  const sells_or_monetizes_data = text.search(/sell.*data|monetize.*data|share.*advertiser|train.*ai|telemetry/i) !== -1;
-  const mandatory_arbitration = text.search(/binding\s+arbitration|arbitrate|exclusive.*arbitration|individual\s+arbitration/i) !== -1;
-  const waives_class_action = text.search(/class\s+action|waive.*class|waiver.*class/i) !== -1;
-  const auto_renewal_charges = text.search(/automatic.*renew|auto.?renew|renew\s+automatically|recurring\s+billing/i) !== -1;
-  const easy_account_deletion = text.search(/delete.*account|erasure.*request|right.*delete.*data|delete\s+your\s+account/i) !== -1;
-
-  const quick_matrix: QuickMatrix = {
-    sells_or_monetizes_data,
-    mandatory_arbitration,
-    waives_class_action,
-    auto_renewal_charges,
-    easy_account_deletion
-  };
-
-  const highRiskCount = analyzed_clauses.filter(c => c.risk_level === 'High Risk' || c.risk_level === 'RED').length;
-  const beCarefulCount = analyzed_clauses.filter(c => c.risk_level === 'Be Careful').length;
-
-  let overall_rating: RiskLevelLabel = 'Low Risk';
-  if (highRiskCount >= 2 || (mandatory_arbitration && sells_or_monetizes_data)) {
-    overall_rating = 'High Risk';
-  } else if (highRiskCount >= 1 || beCarefulCount >= 1) {
-    overall_rating = 'Be Careful';
-  } else if (auto_renewal_charges) {
-    overall_rating = 'Needs Attention';
-  } else {
-    overall_rating = 'Low Risk';
+  userCategory?: string,
+  ocrMetrics?: OCRMetrics,
+  onPipelineStep?: (step: number) => void
+): Promise<LegalAnalysisReport> {
+  if (!GEMINI_API_KEY || !GEMINI_API_KEY.trim()) {
+    throw new Error(
+      "Gemini API key is not configured in the application environment."
+    );
   }
 
-  const domain_category = (userCategory && userCategory.trim().length > 0)
-    ? userCategory.trim()
-    : "Software & SaaS";
+  const apiKey = GEMINI_API_KEY.trim();
 
-  const topTitles = analyzed_clauses.map(c => c.clause_title);
-  const document_summary = `This agreement for ${provider_title} contains key legal terms governing user rights. Core clauses identified include: ${topTitles.slice(0, 3).join(', ')}.`;
+  const normalizedText = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\t/g, ' ')
+    .trim();
 
-  const actionable_suggestions: ActionableSuggestion[] = analyzed_clauses
-    .filter(c => c.recommendation)
-    .map(c => ({
-      suggestion: c.recommendation,
-      reason: c.recommendation_rationale || c.interpretation_rationale
-    }));
-
-  return {
-    provider_title,
-    domain_category,
-    overall_rating,
-    risk_rating_label: overall_rating,
-    estimated_read_time_minutes,
-    word_count,
-    quick_matrix,
-    executive_summary: document_summary,
-    document_summary,
-    analyzed_clauses,
-    clauses: analyzed_clauses,
-    actionable_suggestions,
-    legal_disclaimer: MANDATORY_DISCLAIMER,
-    raw_document_text: text,
-
-    companyName: provider_title,
-    verdict: overall_rating,
-    estimatedReadTime: `${estimated_read_time_minutes} min read (${word_count} words)`,
-    quickNote: document_summary,
-    suggestions: actionable_suggestions
-  };
-}
-
-// Deep Legal AI Analysis Engine powered by Gemini LLM (PART 1 Prompt Logic with NO HEADERS Rule)
-export async function analyzeDocumentWithGemini(
-  text: string,
-  apiKey: string,
-  userProviderTitle?: string,
-  userCategory?: string
-): Promise<AnalysisResult> {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  firePipelineStep(3, onPipelineStep);
+  const fileConsistency = verifyFileConsistency(text, normalizedText, normalizedText);
+  if (!fileConsistency.matches) {
+    throw new Error(fileConsistency.mismatch_reason);
+  }
 
   const resolvedProvider = (userProviderTitle && userProviderTitle.trim())
     ? userProviderTitle.trim()
-    : extractCompanyName(text);
-
+    : (() => {
+        const lines = normalizedText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        return lines.length > 0 ? lines[0].slice(0, 60) : 'Document Provider';
+      })();
   const resolvedCategory = (userCategory && userCategory.trim())
     ? userCategory.trim()
-    : "Software & SaaS";
+    : 'Legal Agreement';
 
-  const prompt = `You are an expert legal AI assistant specializing in contract breakdown, risk detection, and precise clause traceability.
+  const prompt = `You are a fully dynamic AI Legal Intelligence Engine analyzing with zero templates, zero preset categories, zero hardcoded clause names, and zero cached outputs. You behave like ChatGPT: every output comes directly from the uploaded document below.
 
-Your task is to analyze the provided legal document and break it down into clause-by-clause evaluations using exact line extraction and clear, accurate plain-English translations.
+STRICTLY SEQUENTIAL 12-STEP INGESTION & PROCESSING PIPELINE — execute ALL 12 STEPS BEFORE output.
 
-CRITICAL EXTRACTION & ANALYSIS RULES:
+================================================================================
+STEP 1 — Receive & Extract Text
+  (You already receive the normalized document text below.)
 
-1. FULL CLAUSE TRACEABILITY (STRICT):
-   - For the 'exact_original_wording' field, you MUST extract the full, contiguous legal sentence or paragraph from the body text of the contract.
-   - NEVER extract section headers, titles, or uppercase standalone headers alone (e.g., DO NOT extract 'AUTOMATIC SUBSCRIPTION RENEWAL', 'TELEMETRY AND USER DATA LICENSE', or 'MANDATORY ARBITRATION AND CLASS ACTION WAIVER').
-   - ALWAYS extract the full legal body sentence (e.g., 'All paid subscriptions to the Services shall automatically renew at the end of each billing period at the then-current subscription rate.').
+STEP 2 — Normalize & Display Preview
+  (You receive whitespace-normalized cleaned input.)
 
-2. ACCURATE TRIGGER IDENTIFICATION:
-   - Identify the exact key terms or short phrases within that extracted sentence that triggered the rule or risk level (e.g., 'perpetual', 'no refunds', 'binding arbitration').
+STEP 3 — File Consistency Check
+  (Confirm internally the text triple is consistent; source document integrity check.)
 
-3. BALANCED & ACCURATE PLAIN-ENGLISH SUMMARY:
-   - Write a clear, 1-2 sentence plain-language summary explaining what the clause means for an average user.
-   - DO NOT OVERSTATE OR EXAGGERATE: Maintain precise legal accuracy. If a restriction applies only under specific conditions, state that exact limitation rather than making absolute statements like 'under any circumstances'.
+STEP 4 — Document Classification & Input Validation — NON-NEGOTIABLE GUARDRAIL
+Classify the document into EXACTLY ONE of these types (case-sensitive):
+- Terms of Service
+- Privacy Policy
+- SaaS Agreement
+- Employment Contract
+- NDA
+- Consumer Contract
+- Rental Agreement
+- Legal Notice
+- Other Legal Agreement
+- Not a Legal Agreement
 
-4. ACTIONABLE RECOMMENDATIONS:
-   - Provide practical, concrete steps the user can take (e.g., setting reminders, reviewing account privacy toggles, or opting out).
+Also compute metadata.classification_confidence number 0-100.
 
-5. STRUCTURED OUTPUT FORMAT:
-   Return the response exclusively in JSON matching this exact structure:
-   {
-     "document_summary": "Overall plain English overview...",
-     "clauses": [
-       {
-         "clause_title": "Descriptive Title",
-         "risk_level": "High Risk | Be Careful | Needs Attention | Low Risk",
-         "exact_original_wording": "Full contiguous body sentence extracted directly from source text (NO HEADERS)",
-         "trigger_words": ["keyword1", "keyword2"],
-         "plain_english_summary": "Accurate, balanced summary",
-         "interpretation_rationale": "Why the AI interpreted it this way",
-         "recommendation": "Actionable user step",
-         "recommendation_rationale": "Why this action is recommended",
-         "user_impact": "Direct potential consequence for the user"
-       }
-     ]
-   }
+CLASSIFICATION GUARDRAIL (ABORT IF EITHER):
+  A) classification is "Not a Legal Agreement" — IMMEDIATELY ABORT.
+  B) classification_confidence < 85 — IMMEDIATELY ABORT.
+If ABORT: output metadata.detected_type = "Not a Legal Agreement", metadata.overall_risk_rating = "Low", metadata.overall_risk = "Low", executive_overview.bottom_line = "${REJECTED_NON_LEGAL_NOTICE}", executive_overview.top_key_takeaways = [], overall_risk_rating = "Low", smart_action_steps = [], clauses = []
 
-DOCUMENT CONTEXT:
-Provider: ${resolvedProvider}
-Category: ${resolvedCategory}
+STEP 5 — Dynamic Document Segmentation
+Dynamically break the normalized text into logical semantic sections based on ITS ACTUAL STRUCTURE ONLY. Do NOT use a fixed number or predefined section names. Analyze each logical section.
 
-Original Agreement Text:
-"""
-${text}
-"""`;
+STEP 6 — Dynamic Clause Title Generation
+For each semantic section GENERATE a UNIQUE clause_title that reflects THIS SPECIFIC DOCUMENT section. NEVER force into generic bins. Good title examples: "Alexa Voice Data Collection & Deletion", "Spotify Family Plan Geographic Eligibility Requirements". NEVER output "Data Clause".
+
+STEP 7 — Plain-English Summarization Grade 7-8 Reading Level
+Rewrite EACH clause in everyday simple English. Replace legalese phrases like:
+  "sole discretion" → "the company alone decides"
+  "binding arbitration" → "you cannot sue in a normal court and must use a private dispute resolver"
+  "class action waiver" → "you cannot join a group lawsuit"
+  "perpetual license" → "a permanent license that never ends"
+Preserve ALL conditions, exceptions, deadlines, rights, and obligations. Put this result in interpretation.plain_english_summary.
+
+STEP 8 — Real-World Impact Analysis
+For EVERY clause fill two fields:
+  interpretation.why_it_matters: practical real-world consequence why an ordinary user should care.
+  interpretation.worst_case_impact: describe the practical worst-case realistic scenario (money, privacy, media loss, account bans, etc.) if the user ignores this clause.
+
+STEP 9 — Actionable Recommendations
+For EACH clause produce an interpretation.actionable_recommendation UNIQUE AND DERIVED EXCLUSIVELY from that clause. Not generic.
+  GOOD: "Review voice privacy to opt out of recording storage"
+  BAD: "Read this section carefully" (useless generic — DO NOT write this)
+
+STEP 10 — Risk Rating
+For EVERY clause:
+  risk_rating ∈ "Low" | "Medium" | "High" | "Critical"
+  interpretation.risk_justification: exactly one strict sentence explaining WHY that rating.
+For the WHOLE DOCUMENT: overall_risk_rating ∈ "Low" | "Medium" | "High" | "Critical"
+  overall_risk_rating = worst clause-level risk (Critical > High > Medium > Low).
+
+STEP 11 — Traceability & Evidence Mapping
+For EVERY clause populate original_evidence:
+  original_evidence.exact_quote: EXACT VERBATIM contiguous substring from the NORMALIZED DOCUMENT TEXT block below. Must be copy-pasteable!
+  original_evidence.char_start: character index where exact_quote BEGINS in the normalized text (0-based)
+  original_evidence.char_end: character index where exact_quote ENDS (EXCLUSIVE, so normalizedText.slice(char_start, char_end) === exact_quote exactly)
+  original_evidence.trigger_words: string[] of actual keywords/phrases from this clause that drove your risk analysis
+DO NOT INVENT char_start/char_end — compute them by locating exact_quote inside the NORMALIZED DOCUMENT TEXT block.
+
+STEP 12 — AI Semantic Validation Check
+For EVERY clause the LLM self-validates YOUR summary AGAINST the SOURCE TEXT and writes semantic_validation:
+  semantic_validation.semantic_match_percent: 0-100 (100 = summary perfectly matches original meaning)
+  semantic_validation.legal_meaning_kept: true/false (true only if no legal nuance was lost)
+  semantic_validation.misinterpretation_risk ∈ "Low" | "Medium" | "High"
+  semantic_validation.hallucinated_content: short sentence listing any invented/fabricated facts, or the literal word "None" if the summary is 100% faithful and adds nothing
+Additionally mirror into the legacy validation block (for UI compatibility):
+  validation.semantic_match_score = semantic_match_percent
+  validation.legal_meaning_preserved = legal_meaning_kept
+  validation.missing_information: string or null (one sentence about any nuance you omitted; null if none)
+  validation.added_information: string or null (one sentence about hallucinated content; null if none)
+  validation.risk_of_misinterpretation = same as semantic_validation.misinterpretation_risk
+  validation.validation_status ∈ "PASSED" | "FAILED"
+    PASSED only if semantic_match_percent >= 85 AND legal_meaning_kept = true AND added_information is null AND hallucinated_content = "None". Otherwise FAILED.
+
+After processing ALL clauses, build the EXECUTIVE OVERVIEW (write this LAST — you must know every clause first):
+- executive_overview.bottom_line: 1–2 sentence DIRECT plain-English (Grade 7–8) summary of what this whole document means for the user. Someone reading ONLY this line should understand 100% of the critical risk posture.
+- executive_overview.top_key_takeaways: array of EXACTLY 4 bullet points (strings). Each = the biggest risk/most impactful clause written at Grade 7–8 reading level with simple everyday words.
+
+================================================================================
+OUTPUT: STRICT JSON — NO EXTRA FIELDS. NO MARKDOWN CODE FENCES. NO COMMENTS.
+Match this JSON schema EXACTLY:
+
+{
+  "metadata": {
+    "detected_type": one of the 10 classification types,
+    "classification_confidence": number 0-100,
+    "overall_risk": "Low" | "Medium" | "High" | "Critical",
+    "executive_overview": "one-paragraph string summary of the document scope (legacy field)",
+    "total_clauses_analyzed": number (length of clauses array),
+    "overall_risk_rating": "Low" | "Medium" | "High" | "Critical",
+    "executive": {
+      "bottom_line": "1-2 sentence plain-English summary of what this document means in everyday Grade 7-8 language.",
+      "top_key_takeaways": [
+        "Key Point 1: Clear, actionable risk written in Grade 7-8 English.",
+        "Key Point 2: Clear, actionable risk written in Grade 7-8 English.",
+        "Key Point 3: Clear, actionable risk written in Grade 7-8 English.",
+        "Key Point 4: Clear, actionable risk written in Grade 7-8 English."
+      ]
+    }
+  },
+  "executive_overview": {
+    "bottom_line": "1-2 sentence plain-English summary of what this document means in everyday language.",
+    "top_key_takeaways": [
+      "Key Point 1: Clear, actionable risk written in Grade 7-8 English.",
+      "Key Point 2: Clear, actionable risk written in Grade 7-8 English.",
+      "Key Point 3: Clear, actionable risk written in Grade 7-8 English.",
+      "Key Point 4: Clear, actionable risk written in Grade 7-8 English."
+    ]
+  },
+  "overall_risk_rating": "Low" | "Medium" | "High" | "Critical",
+  "smart_action_steps": [
+    {
+      "action_title": "short action title",
+      "reasoning": "why this action matters for this document"
+    }
+  ],
+  "clauses": [
+    {
+      "clause_id": "short lowercase hex id like c8d102e3 (dynamically generated)",
+      "clause_title": "unique specific title derived from actual clause (the dynamic title)",
+      "risk_rating": "Low" | "Medium" | "High" | "Critical",
+      "original_evidence": {
+        "exact_quote": "Exact verbatim string extracted from the original NORMALIZED DOCUMENT TEXT below.",
+        "char_start": number (0-based),
+        "char_end": number (exclusive, so normalizedText.slice(char_start, char_end) === exact_quote),
+        "trigger_words": ["royalty-free", "transferable", "sub-licensable"]
+      },
+      "interpretation": {
+        "plain_english_summary": "1-2 sentences at Grade 7-8 reading level, no legalese.",
+        "why_it_matters": "Practical reason why the user should care in everyday words.",
+        "actionable_recommendation": "Direct step(s) the user can take right now.",
+        "worst_case_impact": "Worst-case scenario regarding money, privacy, media, account or legal standing.",
+        "risk_justification": "Short 1-sentence justification for the risk_rating."
+      },
+      "semantic_validation": {
+        "semantic_match_percent": 0-100 number,
+        "legal_meaning_kept": true or false,
+        "misinterpretation_risk": "Low" | "Medium" | "High",
+        "hallucinated_content": "sentence listing invented facts, or the literal word None"
+      },
+      "dynamic_title": "MUST EQUAL clause_title (legacy field)",
+      "plain_english_summary": "MUST EQUAL interpretation.plain_english_summary (legacy field)",
+      "why_it_matters": "MUST EQUAL interpretation.why_it_matters (legacy field)",
+      "recommendation": "MUST EQUAL interpretation.actionable_recommendation (legacy field)",
+      "potential_user_impact": "MUST EQUAL interpretation.worst_case_impact (legacy field)",
+      "risk_level": "MUST EQUAL risk_rating (legacy field)",
+      "risk_explanation": "MUST EQUAL interpretation.risk_justification (legacy field)",
+      "evidence": {
+        "original_legal_sentence": "MUST EQUAL original_evidence.exact_quote (legacy field)",
+        "char_start": same number as original_evidence.char_start,
+        "char_end": same number as original_evidence.char_end,
+        "trigger_words": same array as original_evidence.trigger_words
+      },
+      "validation": {
+        "semantic_match_score": same number as semantic_validation.semantic_match_percent,
+        "legal_meaning_preserved": same boolean as semantic_validation.legal_meaning_kept,
+        "missing_information": string or null,
+        "added_information": string or null,
+        "risk_of_misinterpretation": "Low" | "Medium" | "High",
+        "validation_status": "PASSED" | "FAILED"
+      }
+    }
+  ]
+}
+
+================================================================================
+CONTEXT PROVIDER: ${resolvedProvider}
+CONTEXT CATEGORY: ${resolvedCategory}
+
+NORMALIZED DOCUMENT TEXT (USE THIS for exact_quote / char_start / char_end offsets):
+"""${normalizedText}"""
+`;
+
+  firePipelineStep(4, onPipelineStep);
 
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              document_summary: { type: "STRING" },
-              clauses: {
-                type: "ARRAY",
-                items: {
-                  type: "OBJECT",
-                  properties: {
-                    clause_title: { type: "STRING" },
-                    risk_level: {
-                      type: "STRING",
-                      enum: ["High Risk", "Be Careful", "Needs Attention", "Low Risk"]
-                    },
-                    exact_original_wording: { type: "STRING" },
-                    trigger_words: {
-                      type: "ARRAY",
-                      items: { type: "STRING" }
-                    },
-                    plain_english_summary: { type: "STRING" },
-                    interpretation_rationale: { type: "STRING" },
-                    recommendation: { type: "STRING" },
-                    recommendation_rationale: { type: "STRING" },
-                    user_impact: { type: "STRING" }
-                  },
-                  required: [
-                    "clause_title", "risk_level", "exact_original_wording", "trigger_words",
-                    "plain_english_summary", "interpretation_rationale", "recommendation",
-                    "recommendation_rationale", "user_impact"
-                  ]
-                }
-              }
-            },
-            required: ["document_summary", "clauses"]
-          }
-        }
-      })
-    });
+    const sdkResult = await generateContentWithSdkRetry(
+      apiKey,
+      prompt,
+      {
+        responseMimeType: "application/json",
+        temperature: 0.2,
+        topP: 0.95,
+        maxOutputTokens: 65536,
+      },
+      'analyzeDocumentWithLLM'
+    );
 
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    firePipelineStep(5, onPipelineStep);
+    firePipelineStep(6, onPipelineStep);
 
-    const data = await response.json();
-    const outputText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!outputText) throw new Error("Empty response from Gemini API");
-
-    const json = JSON.parse(outputText);
-
-    const rawClauses = json.clauses || [];
-    const mappedClauses: AnalyzedClause[] = rawClauses.map((c: any, idx: number) => ({
-      clause_id: idx + 1,
-      clause_title: c.clause_title,
-      risk_level: c.risk_level,
-      overall_clause_assessment: c.risk_level,
-      exact_original_wording: c.exact_original_wording,
-      exact_verbatim_quote: c.exact_original_wording,
-      trigger_words: c.trigger_words || [],
-      highlighted_evidence: (c.trigger_words && c.trigger_words.length > 0) ? c.trigger_words.join(', ') : '',
-      plain_english_summary: c.plain_english_summary,
-      plain_english_translation: c.plain_english_summary,
-      interpretation_rationale: c.interpretation_rationale,
-      why_ai_summarized: c.interpretation_rationale,
-      recommendation: c.recommendation,
-      recommendation_rationale: c.recommendation_rationale,
-      why_recommended: c.recommendation_rationale,
-      user_impact: c.user_impact,
-      potential_user_impact: c.user_impact
-    }));
-
-    const actionable_suggestions: ActionableSuggestion[] = mappedClauses
-      .filter(c => c.recommendation && c.recommendation.trim().length > 0)
-      .map(c => ({
-        suggestion: c.recommendation,
-        reason: c.recommendation_rationale || c.interpretation_rationale
-      }));
-
-    let overall_rating: RiskLevelLabel = 'Low Risk';
-    if (mappedClauses.some(c => c.risk_level === 'High Risk')) {
-      overall_rating = 'High Risk';
-    } else if (mappedClauses.some(c => c.risk_level === 'Be Careful')) {
-      overall_rating = 'Be Careful';
-    } else if (mappedClauses.some(c => c.risk_level === 'Needs Attention')) {
-      overall_rating = 'Needs Attention';
+    const outputText = sdkResult?.response?.text();
+    if (!outputText || typeof outputText !== 'string') {
+      console.error('[Gemini SDK] analyzeDocumentWithLLM: empty or invalid text response from SDK.', {
+        model: GEMINI_MODEL,
+        sdkResultShallow: sdkResult ? { hasResponse: !!sdkResult.response } : null,
+        keyMasked: maskedKey(apiKey),
+      });
+      throw new Error("Empty or invalid response from LLM API.");
     }
 
-    const words = text.split(/\s+/).filter(w => w.length > 0);
-    const word_count = words.length;
-    const estimated_read_time_minutes = Math.max(1, Math.ceil(word_count / 220));
+    let raw: RawReport;
+    try {
+      const cleaned = outputText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      raw = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error('[Gemini SDK] analyzeDocumentWithLLM: LLM returned invalid JSON.', {
+        model: GEMINI_MODEL,
+        parseErrorMessage: parseErr instanceof Error ? parseErr.message : String(parseErr),
+        outputTextLength: outputText.length,
+        outputTextFirst200: outputText.slice(0, 200),
+        outputTextLast200: outputText.slice(-200),
+        keyMasked: maskedKey(apiKey),
+      });
+      throw new Error("LLM returned invalid JSON response. Please retry.");
+    }
 
-    const sells_or_monetizes_data = text.search(/sell.*data|monetize.*data|share.*advertiser|train.*ai|telemetry/i) !== -1;
-    const mandatory_arbitration = text.search(/binding\s+arbitration|arbitrate|exclusive.*arbitration|individual\s+arbitration/i) !== -1;
-    const waives_class_action = text.search(/class\s+action|waive.*class|waiver.*class/i) !== -1;
-    const auto_renewal_charges = text.search(/automatic.*renew|auto.?renew|renew\s+automatically|recurring\s+billing/i) !== -1;
-    const easy_account_deletion = text.search(/delete.*account|erasure.*request|right.*delete.*data|delete\s+your\s+account/i) !== -1;
+    firePipelineStep(7, onPipelineStep);
+    firePipelineStep(8, onPipelineStep);
+    firePipelineStep(9, onPipelineStep);
 
-    const quick_matrix: QuickMatrix = {
-      sells_or_monetizes_data,
-      mandatory_arbitration,
-      waives_class_action,
-      auto_renewal_charges,
-      easy_account_deletion
+    const rawMeta = raw.metadata || {};
+
+    const detected_type = validateDetectedType(rawMeta.detected_type);
+    const classification_confidence = typeof rawMeta.classification_confidence === 'number'
+      ? rawMeta.classification_confidence
+      : 0;
+
+    if (detected_type === 'Not a Legal Agreement' || classification_confidence < 85) {
+      return {
+        metadata: {
+          detected_type: 'Not a Legal Agreement',
+          classification_confidence,
+          overall_risk: 'Low',
+          executive_overview: REJECTED_NON_LEGAL_NOTICE,
+          total_clauses_analyzed: 0,
+          executive: {
+            bottom_line: REJECTED_NON_LEGAL_NOTICE,
+            top_key_takeaways: []
+          },
+          overall_risk_rating: 'Low'
+        },
+        smart_action_steps: [],
+        clauses: []
+      };
+    }
+
+    const rawClauses = Array.isArray(raw.clauses) ? raw.clauses : [];
+
+    async function processClauseRecord(rc: RawDynamicClause, idx: number): Promise<DynamicClause> {
+      const rawOrigEv = rc.original_evidence || {};
+      const rawInterp = rc.interpretation || {};
+      const rawSemVal = rc.semantic_validation || {};
+      const rawEvidence = rc.evidence || {};
+      const rawVal = rc.validation || {};
+
+      const preferredExactQuote = (typeof rawOrigEv.exact_quote === 'string' && rawOrigEv.exact_quote.length > 0)
+        ? rawOrigEv.exact_quote
+        : (typeof rawEvidence.original_legal_sentence === 'string'
+          ? rawEvidence.original_legal_sentence
+          : '');
+      const sentence = preferredExactQuote;
+
+      const preferredCharStart = typeof rawOrigEv.char_start === 'number'
+        ? rawOrigEv.char_start
+        : (typeof rawEvidence.char_start === 'number' ? rawEvidence.char_start : -1);
+      let cStart = preferredCharStart;
+      if ((cStart < 0 || normalizedText.slice(cStart, cStart + Math.min(40, sentence.length)) !== sentence.slice(0, Math.min(40, sentence.length))) && sentence.length > 0) {
+        cStart = normalizedText.indexOf(sentence);
+      }
+      if (cStart < 0 && sentence.length > 0) cStart = normalizedText.indexOf(sentence.slice(0, Math.min(40, sentence.length)));
+      if (cStart < 0) cStart = 0;
+
+      const preferredCharEnd = typeof rawOrigEv.char_end === 'number'
+        ? rawOrigEv.char_end
+        : (typeof rawEvidence.char_end === 'number' ? rawEvidence.char_end : cStart + sentence.length);
+      let cEnd = preferredCharEnd;
+      if (typeof cEnd !== 'number' || cEnd < cStart) cEnd = cStart + sentence.length;
+
+      const preferredTriggers = Array.isArray(rawOrigEv.trigger_words) && rawOrigEv.trigger_words.length > 0
+        ? rawOrigEv.trigger_words
+        : (Array.isArray(rawEvidence.trigger_words) ? rawEvidence.trigger_words : []);
+
+      const evidence: ClauseEvidence = {
+        original_legal_sentence: sentence,
+        char_start: cStart,
+        char_end: cEnd,
+        trigger_words: preferredTriggers.filter(Boolean)
+      };
+
+      const original_evidence: OriginalEvidence = {
+        exact_quote: sentence,
+        char_start: cStart,
+        char_end: cEnd,
+        trigger_words: evidence.trigger_words.slice()
+      };
+
+      const missingInfo = Array.isArray(rawVal.missing_information)
+        ? (rawVal.missing_information.filter(Boolean).join('; ') || null)
+        : (typeof rawVal.missing_information === 'string' && rawVal.missing_information.length > 0 && rawVal.missing_information !== 'None' && rawVal.missing_information !== 'none' && rawVal.missing_information !== 'null'
+          ? rawVal.missing_information
+          : null);
+      const addedInfo = Array.isArray(rawVal.added_information)
+        ? (rawVal.added_information.filter(Boolean).join('; ') || null)
+        : (typeof rawVal.added_information === 'string' && rawVal.added_information.length > 0 && rawVal.added_information !== 'None' && rawVal.added_information !== 'none' && rawVal.added_information !== 'null'
+          ? rawVal.added_information
+          : null);
+
+      const semanticScore = typeof rawVal.semantic_match_score === 'number'
+        ? rawVal.semantic_match_score
+        : (typeof rawSemVal.semantic_match_percent === 'number' ? rawSemVal.semantic_match_percent : 0);
+      const meaningPreserved = rawVal.legal_meaning_preserved === true || rawSemVal.legal_meaning_kept === true;
+      const statusPassed = semanticScore >= 85 && meaningPreserved && !addedInfo && (!rawSemVal.hallucinated_content || rawSemVal.hallucinated_content === 'None' || rawSemVal.hallucinated_content === 'none');
+
+      const validation: ValidationReport = {
+        semantic_match_score: Math.max(0, Math.min(100, semanticScore)),
+        legal_meaning_preserved: meaningPreserved,
+        missing_information: missingInfo,
+        added_information: addedInfo,
+        risk_of_misinterpretation: validateMisinterpretationRisk(typeof rawVal.risk_of_misinterpretation === 'string' && rawVal.risk_of_misinterpretation.length > 0
+          ? rawVal.risk_of_misinterpretation
+          : rawSemVal.misinterpretation_risk),
+        validation_status: statusPassed ? 'PASSED' : 'FAILED'
+      };
+
+      const semantic_validation: SemanticValidationPanel = {
+        semantic_match_percent: validation.semantic_match_score,
+        legal_meaning_kept: validation.legal_meaning_preserved,
+        misinterpretation_risk: validation.risk_of_misinterpretation,
+        hallucinated_content: (typeof rawSemVal.hallucinated_content === 'string' && rawSemVal.hallucinated_content.trim().length > 0)
+          ? rawSemVal.hallucinated_content.trim()
+          : (validation.added_information && validation.added_information.length > 0
+            ? validation.added_information
+            : 'None')
+      };
+
+      const preferredRisk = rc.risk_rating || rc.risk_level;
+      const risk_level = validateClauseRiskLevel(preferredRisk);
+
+      const preferredTitle = (typeof rc.clause_title === 'string' && rc.clause_title.trim().length > 0)
+        ? rc.clause_title.trim()
+        : (typeof rc.dynamic_title === 'string' && rc.dynamic_title.trim().length > 0
+          ? rc.dynamic_title.trim()
+          : `Document Provision ${idx + 1}`);
+
+      const interpretationPlainSummary = typeof rawInterp.plain_english_summary === 'string' && rawInterp.plain_english_summary.length > 0
+        ? rawInterp.plain_english_summary
+        : (typeof rc.plain_english_summary === 'string' ? rc.plain_english_summary : '');
+      const interpretationWhy = typeof rawInterp.why_it_matters === 'string' && rawInterp.why_it_matters.length > 0
+        ? rawInterp.why_it_matters
+        : (typeof rc.why_it_matters === 'string' ? rc.why_it_matters : '');
+      const interpretationRec = typeof rawInterp.actionable_recommendation === 'string' && rawInterp.actionable_recommendation.length > 0
+        ? rawInterp.actionable_recommendation
+        : (typeof rc.recommendation === 'string' ? rc.recommendation : '');
+      const interpretationWorst = typeof rawInterp.worst_case_impact === 'string' && rawInterp.worst_case_impact.length > 0
+        ? rawInterp.worst_case_impact
+        : (typeof rc.potential_user_impact === 'string' ? rc.potential_user_impact : '');
+      const interpretationJustification = typeof rawInterp.risk_justification === 'string' && rawInterp.risk_justification.length > 0
+        ? rawInterp.risk_justification
+        : (typeof rc.risk_explanation === 'string' && rc.risk_explanation.length > 0
+          ? rc.risk_explanation
+          : `Rated ${risk_level} risk based on clause analysis.`);
+
+      const interpretation: ClauseInterpretation = {
+        plain_english_summary: interpretationPlainSummary,
+        why_it_matters: interpretationWhy,
+        actionable_recommendation: interpretationRec,
+        worst_case_impact: interpretationWorst,
+        risk_justification: interpretationJustification
+      };
+
+      return {
+        clause_id: typeof rc.clause_id === 'string' && rc.clause_id.length > 0
+          ? rc.clause_id
+          : generateUUID(),
+        dynamic_title: preferredTitle,
+        plain_english_summary: interpretationPlainSummary,
+        why_it_matters: interpretationWhy,
+        recommendation: interpretationRec,
+        potential_user_impact: interpretationWorst,
+        risk_level,
+        risk_explanation: interpretationJustification,
+        evidence,
+        validation,
+        clause_title: preferredTitle,
+        risk_rating: risk_level,
+        original_evidence,
+        interpretation,
+        semantic_validation
+      };
+    }
+
+    const clauses: DynamicClause[] = [];
+    const batchSize = Math.max(1, Math.min(8, typeof CLAUSE_BATCH_CONCURRENCY === 'number' ? CLAUSE_BATCH_CONCURRENCY : 3));
+    for (let i = 0; i < rawClauses.length; i += batchSize) {
+      const chunk = rawClauses.slice(i, i + batchSize);
+      const processedChunk = await Promise.all(
+        chunk.map((rc, chunkIdx) => processClauseRecord(rc, i + chunkIdx))
+      );
+      clauses.push(...processedChunk);
+    }
+
+    firePipelineStep(10, onPipelineStep);
+    firePipelineStep(11, onPipelineStep);
+
+    const rawSteps = Array.isArray(raw.smart_action_steps) ? raw.smart_action_steps : [];
+    const smart_action_steps: SmartActionStep[] = rawSteps
+      .filter(s => typeof s.action_title === 'string' && s.action_title.trim().length > 0)
+      .map(s => ({
+        action_title: s.action_title!.trim(),
+        reasoning: typeof s.reasoning === 'string' ? s.reasoning : ''
+      }));
+
+    const hasCritical = clauses.some(c => c.risk_level === 'Critical');
+    const hasHigh = clauses.some(c => c.risk_level === 'High');
+    const hasMedium = clauses.some(c => c.risk_level === 'Medium');
+    const computedOverall: RiskLevel = hasCritical
+      ? 'Critical'
+      : hasHigh
+      ? 'High'
+      : hasMedium
+      ? 'Medium'
+      : 'Low';
+    const rawOverallRating = raw.overall_risk_rating || rawMeta.overall_risk_rating || rawMeta.overall_risk;
+    const overall_risk = validateClauseRiskLevel(rawOverallRating) ?? computedOverall;
+
+    const rawRootExecutive = raw.executive_overview;
+    const rawMetaExecutive = rawMeta?.executive;
+    const preferredBottomLine = typeof rawRootExecutive?.bottom_line === 'string' && rawRootExecutive.bottom_line.trim().length > 0
+      ? rawRootExecutive.bottom_line.trim()
+      : (typeof rawMetaExecutive?.bottom_line === 'string' && rawMetaExecutive.bottom_line.trim().length > 0
+        ? rawMetaExecutive.bottom_line.trim()
+        : '');
+    const preferredTakeaways = Array.isArray(rawRootExecutive?.top_key_takeaways) && rawRootExecutive.top_key_takeaways.length > 0
+      ? rawRootExecutive.top_key_takeaways.filter(s => typeof s === 'string' && s.trim().length > 0)
+      : (Array.isArray(rawMetaExecutive?.top_key_takeaways)
+        ? rawMetaExecutive.top_key_takeaways.filter(s => typeof s === 'string' && s.trim().length > 0)
+        : []);
+
+    const executive: ExecutiveOverview = {
+      bottom_line: preferredBottomLine.length > 0
+        ? preferredBottomLine
+        : (typeof rawMeta.executive_overview === 'string' && rawMeta.executive_overview.length > 0
+          ? rawMeta.executive_overview
+          : `This ${detected_type} analysis covers ${clauses.length} dynamically discovered sections. Overall risk assessment: ${overall_risk}.`),
+      top_key_takeaways: preferredTakeaways.slice(0, 4)
     };
 
-    return {
-      provider_title: resolvedProvider,
-      domain_category: resolvedCategory,
-      overall_rating,
-      risk_rating_label: overall_rating,
-      estimated_read_time_minutes,
-      word_count,
-      quick_matrix,
-      executive_summary: json.document_summary || "Plain English document overview.",
-      document_summary: json.document_summary || "Plain English document overview.",
-      analyzed_clauses: mappedClauses,
-      clauses: mappedClauses,
-      actionable_suggestions,
-      legal_disclaimer: MANDATORY_DISCLAIMER,
-      raw_document_text: text,
-      companyName: resolvedProvider,
-      verdict: overall_rating,
-      estimatedReadTime: `${estimated_read_time_minutes} min read (${word_count} words)`,
-      quickNote: json.document_summary || "Plain English document overview.",
-      suggestions: actionable_suggestions
+    const legacyExecutiveOverviewString = executive.bottom_line + (executive.top_key_takeaways.length > 0
+      ? ' — Key points: ' + executive.top_key_takeaways.join(' | ')
+      : '');
+
+    const report: LegalAnalysisReport = {
+      metadata: {
+        detected_type,
+        classification_confidence,
+        overall_risk,
+        executive_overview: typeof rawMeta.executive_overview === 'string' && rawMeta.executive_overview.length > 0
+          ? rawMeta.executive_overview
+          : legacyExecutiveOverviewString,
+        total_clauses_analyzed: typeof rawMeta.total_clauses_analyzed === 'number'
+          ? rawMeta.total_clauses_analyzed
+          : clauses.length,
+        executive,
+        overall_risk_rating: overall_risk
+      },
+      smart_action_steps,
+      clauses
     };
-  } catch (error) {
-    console.error("Gemini API call failed, falling back to local legal AI engine:", error);
-    return analyzeDocumentLocally(text, userProviderTitle, userCategory);
+
+    firePipelineStep(12, onPipelineStep);
+    void ocrMetrics; // Reserved for future audit logging
+
+    return report;
+  } catch (err) {
+    const urlHint = `(SDK-managed: models/${GEMINI_MODEL}:generateContent via @google/generative-ai)`;
+    console.error('[Gemini SDK] analyzeDocumentWithLLM: FATAL pipeline error.', {
+      model: GEMINI_MODEL,
+      endpointUrlHint: urlHint,
+      documentWordCount: text.trim().split(/\s+/).filter(Boolean).length,
+      providerTitle: userProviderTitle || '(none)',
+      domainCategory: userCategory || '(none)',
+      keyMasked: maskedKey(apiKey),
+      errorObject: err,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      errorStack: err instanceof Error ? err.stack : undefined,
+    });
+    if (err instanceof Error) {
+      throw err;
+    }
+    throw new Error(`LLM analysis failed: ${String(err)}`);
   }
 }

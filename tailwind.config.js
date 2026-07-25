@@ -79,6 +79,10 @@ export default {
         mono: ["'JetBrains Mono'", "'Fira Code'", "Consolas", "monospace"],
       },
 
+      gridTemplateColumns: {
+        20: 'repeat(20, minmax(0, 1fr))',
+      },
+
       boxShadow: {
         premium: "0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.06)",
         card: "0 2px 8px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06)",

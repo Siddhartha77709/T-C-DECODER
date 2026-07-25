@@ -1,11 +1,13 @@
 import React from 'react';
-import { Shield, Sparkles, User, Cpu } from 'lucide-react';
+import { Shield, Sparkles, User, Brain } from 'lucide-react';
 
 interface HeaderProps {
-  isApiConfigured: boolean;
+  processingStep?: number | null;
 }
 
-export const Header: React.FC<HeaderProps> = ({ isApiConfigured }) => {
+export const Header: React.FC<HeaderProps> = ({ processingStep }) => {
+  const isProcessing = typeof processingStep === 'number' && processingStep > 0;
+
   return (
     <header className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#0F1117]/90 backdrop-blur-xl border-b border-white/10 flex items-center justify-between px-4 z-40 text-white shadow-lg">
       <div className="flex items-center gap-2.5">
@@ -20,19 +22,19 @@ export const Header: React.FC<HeaderProps> = ({ isApiConfigured }) => {
       
       <div className="flex items-center gap-2.5">
         <div className={`flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${
-          isApiConfigured 
-            ? 'bg-brand-500/20 text-brand-300 border-brand-500/30' 
-            : 'bg-white/10 text-gray-300 border-white/10'
+          isProcessing
+            ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+            : 'bg-brand-500/20 text-brand-300 border-brand-500/30'
         }`}>
-          {isApiConfigured ? (
+          {isProcessing ? (
             <>
-              <Sparkles className="w-3 h-3 text-brand-400 animate-pulse" />
-              <span>Gemini AI</span>
+              <Brain className="w-3 h-3 text-amber-400 animate-pulse" />
+              <span>Step {processingStep}/12</span>
             </>
           ) : (
             <>
-              <Cpu className="w-3 h-3 text-gray-400" />
-              <span>Local Core</span>
+              <Sparkles className="w-3 h-3 text-brand-400 animate-pulse" />
+              <span>Gemini LLM</span>
             </>
           )}
         </div>
