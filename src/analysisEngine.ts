@@ -61,7 +61,7 @@ export function getPipelineStepDescription(step: number): string {
 export { MANDATORY_DISCLAIMER, REJECTED_NON_LEGAL_NOTICE };
 
 export const INVALID_DOCUMENT_TYPE_WARNING =
-  "Invalid Document Type: Please upload or paste a valid Terms & Conditions or Legal Agreement document to analyze.";
+  "Invalid Document Type: The uploaded file does not appear to contain Terms & Conditions, Privacy Policy, or a Legal Agreement. Please upload a valid legal document to continue analysis.";
 
 const LEGAL_DOCUMENT_SIGNAL_KEYWORDS: string[] = [
   'terms of service', 'terms and conditions', 'terms & conditions', 'terms of use',
@@ -347,23 +347,91 @@ interface RawReport {
   overall_risk_rating?: string;
 }
 
-const VITE_GEMINI_API_KEY: string =
-  (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string')
-    ? import.meta.env.VITE_GEMINI_API_KEY
-    : '';
+const USER_PROVIDED_API_KEY_STORAGE_KEY = 'tandc_user_gemini_api_key';
+
+type NodeProcessEnvShape = { VITE_GEMINI_API_KEY?: string; GEMINI_API_KEY?: string };
+type NodeProcessShape = { env?: NodeProcessEnvShape };
+
+function getNodeProcessOrNull(): NodeProcessShape | null {
+  try {
+    const g = globalThis as unknown as { process?: NodeProcessShape };
+    if (g && typeof g.process === 'object' && g.process !== null && typeof g.process.env === 'object' && g.process.env !== null) {
+      return g.process;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function resolveGeminiApiKeyFromAllSources(): { key: string; source: 'import.meta.env' | 'process.env' | 'localStorage.user' | 'none' } {
+  if (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string') {
+    const k = import.meta.env.VITE_GEMINI_API_KEY.trim();
+    if (k.length > 0) {
+      return { key: k, source: 'import.meta.env' };
+    }
+  }
+  const nodeProcess = getNodeProcessOrNull();
+  if (nodeProcess && nodeProcess.env) {
+    const fromProcessEnv = (nodeProcess.env.VITE_GEMINI_API_KEY || nodeProcess.env.GEMINI_API_KEY || '').trim();
+    if (fromProcessEnv.length > 0) {
+      return { key: fromProcessEnv, source: 'process.env' };
+    }
+  }
+  if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+    try {
+      const fromStorage = (window.localStorage.getItem(USER_PROVIDED_API_KEY_STORAGE_KEY) || '').trim();
+      if (fromStorage.length > 0) {
+        return { key: fromStorage, source: 'localStorage.user' };
+      }
+    } catch {
+      // localStorage access blocked (e.g. private mode); ignore silently
+    }
+  }
+  return { key: '', source: 'none' };
+}
+
+const API_KEY_RESOLUTION = resolveGeminiApiKeyFromAllSources();
+
+if (typeof window !== 'undefined') {
+  if (API_KEY_RESOLUTION.source === 'none') {
+    console.warn(
+      '[Gemini Config] WARNING: No Gemini API key resolved from any source. ' +
+      'Expected VITE_GEMINI_API_KEY via import.meta.env (Vite), or process.env.VITE_GEMINI_API_KEY / ' +
+      'process.env.GEMINI_API_KEY (Node/SSR fallback), or a user-provided key in localStorage key "' +
+      USER_PROVIDED_API_KEY_STORAGE_KEY + '". Set one of these to enable LLM analysis. ' +
+      'UI will show Settings input for user-provided key.'
+    );
+  } else {
+    console.info(
+      `[Gemini Config] API key resolved successfully. source=${API_KEY_RESOLUTION.source} ` +
+      `keyLength=${API_KEY_RESOLUTION.key.length} masked=${maskedKey(API_KEY_RESOLUTION.key)}`
+    );
+  }
+}
 
 const GEMINI_API_KEY_MISSING_ERROR =
-  'Gemini API key is not configured. Please set VITE_GEMINI_API_KEY in your local .env file and restart the dev server.';
+  'Gemini API key is not configured. Set VITE_GEMINI_API_KEY in your .env file (recommended), ' +
+  'or provide a user-level key in the application Settings panel, then restart the dev server.';
 
 function getGeminiApiKeyOrThrow(context?: string): string {
-  const key = (VITE_GEMINI_API_KEY || '').trim();
+  const key = (API_KEY_RESOLUTION.key || '').trim();
   if (!key) {
     const ctx = context ? ` [${context}]` : '';
     const err = new Error(GEMINI_API_KEY_MISSING_ERROR + ctx);
-    console.error('[Gemini Config] API key missing.', {
+    const nodeProcess = getNodeProcessOrNull();
+    console.error('[Gemini Config] API key missing. All sources exhausted.', {
       hasImportMetaEnv: typeof import.meta !== 'undefined' && !!import.meta?.env,
-      keyLength: VITE_GEMINI_API_KEY.length,
+      importMetaEnvKeyLength: (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string')
+        ? import.meta.env.VITE_GEMINI_API_KEY.length : 0,
+      hasProcessEnv: !!nodeProcess,
+      processEnvKeyLength: nodeProcess?.env
+        ? (nodeProcess.env.VITE_GEMINI_API_KEY || nodeProcess.env.GEMINI_API_KEY || '').length
+        : 0,
+      hasLocalStorage: typeof window !== 'undefined' && !!window.localStorage,
+      resolvedSource: API_KEY_RESOLUTION.source,
       context: context || '(none)',
+      userKeyHint: `Set via localStorage["${USER_PROVIDED_API_KEY_STORAGE_KEY}"] if Settings UI is unavailable.`
     });
     throw err;
   }
@@ -371,7 +439,11 @@ function getGeminiApiKeyOrThrow(context?: string): string {
 }
 
 function getGeminiApiKeyOrEmpty(): string {
-  return (VITE_GEMINI_API_KEY || '').trim();
+  return (API_KEY_RESOLUTION.key || '').trim();
+}
+
+export function getUserProvidedApiKeyStorageKey(): string {
+  return USER_PROVIDED_API_KEY_STORAGE_KEY;
 }
 
 const RETRY_MAX_ATTEMPTS = 4;

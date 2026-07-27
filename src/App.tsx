@@ -13,7 +13,10 @@ import {
   ChevronLeft,
   Eye,
   CheckCircle2,
-  Brain
+  Brain,
+  Upload,
+  RotateCcw,
+  FileWarning
 } from 'lucide-react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -217,6 +220,22 @@ function App() {
         (step) => setPipelineStep(step)
       );
 
+      // Layer-3 guardrail intercept: do NOT switch to ANALYSIS RESULTS view if the LLM
+      // internally classified the doc as Not a Legal Agreement. Keep user in upload
+      // view with the validation banner so they can retry seamlessly.
+      if (
+        res.metadata.detected_type === 'Not a Legal Agreement' ||
+        (typeof res.metadata.classification_confidence === 'number' && res.metadata.classification_confidence < 85) ||
+        !res.clauses || res.clauses.length === 0
+      ) {
+        setDocumentValid('FAILED');
+        setReport(null);
+        setExtractionError(INVALID_DOCUMENT_TYPE_WARNING);
+        setIsAnalyzing(false);
+        setTimeout(() => setPipelineStep(null), 1200);
+        return;
+      }
+
       setReport(res);
     } catch (e: unknown) {
       console.error("Analysis execution error:", e);
@@ -378,11 +397,59 @@ function App() {
                   )}
 
                   {extractionError && (
-                    <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-red-900 animate-fade-in">
-                      <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-bold">Extraction / Validation Alert</span>
-                        <p className="text-[11px] leading-relaxed font-medium">{extractionError}</p>
+                    <div className="bg-red-50 border border-red-200 rounded-2xl overflow-hidden animate-fade-in shadow-sm">
+                      <div className="flex items-start gap-3 p-4 pb-3.5">
+                        <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <FileWarning className="w-5 h-5" />
+                        </div>
+                        <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] font-extrabold uppercase tracking-wider text-red-700 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                              Document Rejected
+                            </span>
+                            <span className="text-[10px] font-bold uppercase tracking-wider bg-red-100 text-red-700 px-2 py-0.5 rounded-full border border-red-200/80">
+                              Validation Failed
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-sm text-red-900 leading-snug">
+                            Unable to analyze — document is not a valid legal agreement
+                          </h4>
+                          <p className="text-[12px] leading-relaxed font-medium text-red-800">
+                            {extractionError}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="bg-white/60 border-t border-red-200/70 px-4 py-3.5 flex flex-col sm:flex-row sm:items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="flex-1 flex items-center justify-center gap-2 font-bold text-xs py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-500/20 transition-all active:scale-[0.99]"
+                        >
+                          <Upload className="w-4 h-4" />
+                          <span>Upload Another Document</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearInput}
+                          className="flex-1 sm:flex-none flex items-center justify-center gap-2 font-bold text-xs py-3 px-4 rounded-xl bg-white hover:bg-gray-50 text-red-700 border border-red-200 transition-all active:scale-[0.99]"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          <span>Clear All &amp; Start Over</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (textareaRef.current) {
+                              textareaRef.current.focus();
+                              textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                          }}
+                          className="sm:w-auto flex items-center justify-center gap-2 font-bold text-xs py-3 px-4 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-gray-50 border border-gray-200 transition-all active:scale-[0.99]"
+                        >
+                          <FileText className="w-4 h-4" />
+                          <span>Edit Pasted Text</span>
+                        </button>
                       </div>
                     </div>
                   )}
@@ -565,6 +632,7 @@ function App() {
                   domainCategory={category}
                   onSave={handleSaveReport}
                   isSaved={isCurrentReportSaved()}
+                  onReset={handleClearInput}
                 />
               </div>
             )}

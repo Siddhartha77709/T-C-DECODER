@@ -20,7 +20,10 @@ import {
   Info,
   Clock,
   AlignLeft,
-  Filter
+  Filter,
+  Upload,
+  RotateCcw,
+  FileWarning
 } from 'lucide-react';
 import type {
   LegalAnalysisReport,
@@ -37,6 +40,7 @@ interface AnalysisResultsProps {
   domainCategory?: string;
   onSave: () => void;
   isSaved: boolean;
+  onReset?: () => void;
 }
 
 type FilterTab = 'all' | 'high' | 'attention';
@@ -666,7 +670,8 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   providerTitle,
   domainCategory,
   onSave,
-  isSaved
+  isSaved,
+  onReset
 }) => {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [highlightedClauseId, setHighlightedClauseId] = useState<string | null>(null);
@@ -707,7 +712,9 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
     });
   };
 
-  // Guardrail rejection view
+  // Guardrail rejection view — defense-in-depth. Normally the App layer intercepts
+  // Not-a-Legal-Agreement reports BEFORE rendering this component, but if we end up
+  // here anyway (e.g. user loaded a saved rejected document), provide a full reset UX.
   if (
     report.metadata.detected_type === 'Not a Legal Agreement' ||
     report.metadata.classification_confidence < 85 ||
@@ -715,27 +722,96 @@ export const AnalysisResults: React.FC<AnalysisResultsProps> = ({
   ) {
     return (
       <div className="flex flex-col gap-6 w-full animate-fade-in">
-        <div className="bg-red-50 border-2 border-red-200 rounded-3xl p-8 shadow-sm flex flex-col gap-4 text-red-950">
-          <div className="flex items-center gap-3 border-b border-red-200 pb-4">
-            <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
-              <XCircle className="w-6 h-6" />
+        <div className="bg-gradient-to-br from-red-50 via-white to-rose-50 border-2 border-red-200 rounded-3xl overflow-hidden shadow-sm">
+          <div className="px-6 md:px-8 pt-6 md:pt-8 pb-5 flex flex-col md:flex-row md:items-start gap-4 md:gap-5">
+            <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-red-100 text-red-600 border border-red-200 flex items-center justify-center flex-shrink-0 shadow-inner">
+              <FileWarning className="w-7 h-7 md:w-8 md:h-8" strokeWidth={1.8} />
             </div>
-            <div>
-              <h3 className="font-extrabold text-lg text-red-900">
-                Input Document Validation Failure
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap mb-2">
+                <span className="text-[10px] md:text-[11px] font-extrabold uppercase tracking-wider text-red-700 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Input Document Validation Failure
+                </span>
+                <span className="text-[9px] md:text-[10px] font-extrabold uppercase tracking-wider bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full border border-red-200">
+                  Classification Rejected
+                </span>
+              </div>
+              <h3 className="font-extrabold text-lg md:text-xl text-red-900 leading-tight">
+                This file cannot be analyzed by the Legal AI pipeline.
               </h3>
-              <p className="text-xs text-red-700 font-semibold mt-0.5">
-                Classification: <span className="underline font-extrabold">{report.metadata.detected_type}</span> ({report.metadata.classification_confidence}% Confidence)
+              <p className="text-[12px] md:text-sm font-bold text-red-800 mt-2 leading-relaxed">
+                Classification: <span className="underline decoration-red-300 decoration-2">{report.metadata.detected_type}</span>
+                {' · '}
+                {report.metadata.classification_confidence}% Confidence
               </p>
             </div>
           </div>
-          <div className="bg-white/90 border border-red-300 rounded-2xl p-5 text-sm font-bold text-red-900 leading-relaxed shadow-sm">
-            {REJECTED_NON_LEGAL_NOTICE}
+
+          <div className="mx-6 md:mx-8 mb-5 bg-white border border-red-200 rounded-2xl p-4 md:p-5 shadow-sm">
+            <p className="text-xs md:text-sm font-bold text-red-900 leading-relaxed">
+              {REJECTED_NON_LEGAL_NOTICE}
+            </p>
+            {report.metadata.executive_overview && report.metadata.executive_overview !== REJECTED_NON_LEGAL_NOTICE && (
+              <p className="text-[11px] md:text-xs font-mono text-red-800 leading-relaxed mt-3 pt-3 border-t border-dashed border-red-200">
+                <strong className="font-bold non-mono tracking-wider text-red-700 uppercase text-[10px]">System Reasoning:&nbsp;</strong>
+                {report.metadata.executive_overview}
+              </p>
+            )}
           </div>
-          <div className="text-xs font-mono text-red-800 leading-relaxed">
-            <strong>System Reasoning:</strong> {report.metadata.executive_overview}
+
+          <div className="bg-white/80 border-t border-red-200/70 px-6 md:px-8 py-4.5 md:py-5 flex flex-col md:flex-row md:items-center gap-2.5 md:gap-3">
+            {onReset ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onReset}
+                  className="flex-1 inline-flex items-center justify-center gap-2 font-bold text-xs md:text-sm py-3 md:py-3.5 px-5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-500/20 transition-all active:scale-[0.99]"
+                >
+                  <Upload className="w-4 h-4 md:w-5 md:h-5" />
+                  <span>Upload Another Document</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onReset}
+                  className="flex-1 md:flex-none inline-flex items-center justify-center gap-2 font-bold text-xs md:text-sm py-3 md:py-3.5 px-5 rounded-xl bg-white hover:bg-gray-50 text-red-700 border border-red-200 transition-all active:scale-[0.99]"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Reset &amp; Try Again</span>
+                </button>
+              </>
+            ) : (
+              <div className="flex-1 text-xs md:text-sm font-semibold text-red-800 bg-red-100/70 border border-red-200 rounded-xl px-4 py-3">
+                Navigate back to the Analyze tab to upload a valid Terms &amp; Conditions, Privacy Policy, or Legal Agreement.
+              </div>
+            )}
           </div>
         </div>
+
+        {sourceText && sourceText.trim().length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden w-full">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center flex-shrink-0">
+                  <AlignLeft className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-xs text-gray-900">
+                    Submitted Document Preview
+                  </h4>
+                  <p className="text-[10px] text-gray-500 font-medium">
+                    {sourceText.trim().split(/\s+/).filter(Boolean).length.toLocaleString()} words · this text remains on screen for reference
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-4 max-h-[260px] overflow-y-auto scrollbar-thin bg-slate-50">
+              <pre className="text-[11px] md:text-xs leading-relaxed text-gray-700 font-sans whitespace-pre-wrap break-words word-break:break-word">
+                {sourceText}
+              </pre>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
