@@ -103,7 +103,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             ) : (
               <>
                 <Sparkles className="w-3.5 h-3.5 text-brand-400 animate-pulse" />
-                <span className="text-brand-200">T&amp;C LLM Ready</span>
+                <span className="text-brand-200">T&C LLM Ready</span>
               </>
             )}
           </div>

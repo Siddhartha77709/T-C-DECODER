@@ -34,7 +34,7 @@ export const Header: React.FC<HeaderProps> = ({ processingStep }) => {
           ) : (
             <>
               <Sparkles className="w-3 h-3 text-brand-400 animate-pulse" />
-              <span>Gemini LLM</span>
+              <span>T&amp;C LLM</span>
             </>
           )}
         </div>
