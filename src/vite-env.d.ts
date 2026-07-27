@@ -9,3 +9,6 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+declare const __APP_BUILD_ID__: string;
+
+

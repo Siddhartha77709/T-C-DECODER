@@ -1,0 +1,16 @@
+{
+  "short_name": "T&C",
+  "name": "T&C - Terms & Conditions Decoder",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#FAF8F5",
+  "theme_color": "#16191E",
+  "display": "standalone",
+  "orientation": "portrait"
+}
