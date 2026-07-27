@@ -103,14 +103,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             ) : (
               <>
                 <Sparkles className="w-3.5 h-3.5 text-brand-400 animate-pulse" />
-                <span className="text-brand-200">Gemini LLM Ready</span>
+                <span className="text-brand-200">T&amp;C LLM Ready</span>
               </>
             )}
           </div>
           <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
             {isProcessing
               ? `Executing 12-step dynamic legal intelligence pipeline on uploaded document (step ${processingStep}/12).`
-              : "Deep neural LLM evaluation active — zero templates, zero hardcoded clauses, zero cached reports."}
+              : "AI Assistant active — dedicated to helping you analyze, decode, and understand complex terms and conditions."}
           </p>
         </div>
         

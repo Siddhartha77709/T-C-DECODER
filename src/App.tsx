@@ -318,24 +318,36 @@ function App() {
           <div className="flex-1 flex flex-col gap-6">
             {/* 12-STEP PIPELINE PROGRESS OVERLAY DURING ANALYSIS */}
             {isAnalyzing && pipelineStep !== null && (
-              <div className="bg-navy-900 text-white rounded-2xl shadow-lg border border-brand-500/30 p-5 animate-fade-in relative overflow-hidden">
+              <div className="bg-navy-900 text-white rounded-2xl shadow-lg border border-brand-500/30 p-5 md:p-6 animate-fade-in relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-r from-brand-500/5 via-indigo-500/10 to-purple-500/5 pointer-events-none" />
-                <div className="relative flex flex-col gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-brand-500/20 border border-brand-400/40 flex items-center justify-center">
-                      <Brain className="w-5 h-5 text-brand-300 animate-pulse" />
+                <div className="relative flex flex-col gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className="w-11 h-11 md:w-12 md:h-12 rounded-xl bg-brand-500/20 border border-brand-400/40 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Brain className="w-5 h-5 md:w-6 md:h-6 text-brand-300 animate-spin-slow" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="font-extrabold text-sm tracking-tight">
-                          12-Step Legal AI Pipeline
-                        </h3>
-                        <span className="text-[11px] font-bold text-brand-300 tabular-nums">
-                          Step {pipelineStep} / 12
+                    <div className="flex-1 min-w-0 flex flex-col gap-2">
+                      <h2 className="font-extrabold text-base md:text-lg leading-snug text-white tracking-tight">
+                        Trying to analyze and give you the best analyzed summarized report...
+                      </h2>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-brand-500/20 text-brand-200 border border-brand-500/30 flex items-center gap-1.5">
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-brand-300"></span>
+                          </span>
+                          AI Processing
                         </span>
+                        <div className="flex items-center justify-between gap-2 flex-1 min-w-0">
+                          <h3 className="font-bold text-xs md:text-sm tracking-tight text-brand-100 truncate min-w-0">
+                            12-Step Legal AI Pipeline
+                          </h3>
+                          <span className="text-[11px] font-bold text-brand-300 tabular-nums whitespace-nowrap">
+                            Step {pipelineStep} / 12
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-300 mt-0.5 font-medium truncate">
-                        <strong className="text-brand-300">{getPipelineStepName(pipelineStep)}</strong> — {getPipelineStepDescription(pipelineStep)}
+                      <p className="text-[11px] md:text-xs text-gray-300 mt-0.5 font-medium truncate">
+                        <strong className="text-brand-300 font-extrabold">{getPipelineStepName(pipelineStep)}</strong> — {getPipelineStepDescription(pipelineStep)}
                       </p>
                     </div>
                   </div>
@@ -345,7 +357,7 @@ function App() {
                       style={{ width: `${(pipelineStep / 12) * 100}%` }}
                     />
                   </div>
-                  <div className="grid grid-cols-6 md:grid-cols-12 gap-1.5 pt-1">
+                  <div className="grid grid-cols-6 md:grid-cols-12 gap-1.5 pt-0.5">
                     {Array.from({ length: 12 }, (_, i) => i + 1).map(step => {
                       const done = step < pipelineStep;
                       const current = step === pipelineStep;
