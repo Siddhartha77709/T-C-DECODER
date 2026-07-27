@@ -12,14 +12,24 @@ import {
   Save,
   XCircle
 } from 'lucide-react';
-import { getUserProvidedApiKeyStorageKey } from '../analysisEngine';
+import {
+  getUserProvidedApiKeyStorageKey,
+  getLegacyUserProvidedApiKeyStorageKey
+} from '../analysisEngine';
 
 interface SettingsProps {
   onClearSavedDocs: () => void;
   savedCount: number;
 }
 
-type KeySource = 'import.meta.env' | 'process.env' | 'localStorage.user' | 'none';
+type KeySource =
+  | 'import.meta.env.VITE_GEMINI_API_KEY'
+  | 'import.meta.env.GEMINI_API_KEY'
+  | 'process.env.VITE_GEMINI_API_KEY'
+  | 'process.env.GEMINI_API_KEY'
+  | 'localStorage.GEMINI_API_KEY'
+  | 'localStorage.tandc_user_gemini_api_key'
+  | 'none';
 
 type NodeProcessEnvShape = { VITE_GEMINI_API_KEY?: string; GEMINI_API_KEY?: string };
 type NodeProcessShape = { env?: NodeProcessEnvShape };
@@ -36,17 +46,36 @@ function getNodeProcessOrNull(): NodeProcessShape | null {
   return null;
 }
 
-function detectActiveKeySource(userKeySet: boolean): KeySource {
-  if (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string') {
-    const k = import.meta.env.VITE_GEMINI_API_KEY.trim();
-    if (k.length > 0) return 'import.meta.env';
+function readLocalStorageSafe(key: string): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    if (typeof window.localStorage === 'undefined') return '';
+    return (window.localStorage.getItem(key) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function detectActiveKeySource(): KeySource {
+  if (typeof import.meta !== 'undefined' && import.meta?.env) {
+    if (typeof import.meta.env.VITE_GEMINI_API_KEY === 'string') {
+      const k = import.meta.env.VITE_GEMINI_API_KEY.trim();
+      if (k.length > 0) return 'import.meta.env.VITE_GEMINI_API_KEY';
+    }
+    if (typeof import.meta.env.GEMINI_API_KEY === 'string') {
+      const k = import.meta.env.GEMINI_API_KEY.trim();
+      if (k.length > 0) return 'import.meta.env.GEMINI_API_KEY';
+    }
   }
   const nodeProcess = getNodeProcessOrNull();
-  if (nodeProcess && nodeProcess.env) {
-    const fromProcessEnv = (nodeProcess.env.VITE_GEMINI_API_KEY || nodeProcess.env.GEMINI_API_KEY || '').trim();
-    if (fromProcessEnv.length > 0) return 'process.env';
+  if (nodeProcess?.env) {
+    if ((nodeProcess.env.VITE_GEMINI_API_KEY || '').trim().length > 0) return 'process.env.VITE_GEMINI_API_KEY';
+    if ((nodeProcess.env.GEMINI_API_KEY || '').trim().length > 0) return 'process.env.GEMINI_API_KEY';
   }
-  if (userKeySet) return 'localStorage.user';
+  const legacyStorage = readLocalStorageSafe(getLegacyUserProvidedApiKeyStorageKey());
+  if (legacyStorage.length > 0) return 'localStorage.GEMINI_API_KEY';
+  const brandedStorage = readLocalStorageSafe(getUserProvidedApiKeyStorageKey());
+  if (brandedStorage.length > 0) return 'localStorage.tandc_user_gemini_api_key';
   return 'none';
 }
 
@@ -55,33 +84,33 @@ export const Settings: React.FC<SettingsProps> = ({
   savedCount,
 }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const storageKey = getUserProvidedApiKeyStorageKey();
+  const brandedStorageKey = getUserProvidedApiKeyStorageKey();
+  const legacyStorageKey = getLegacyUserProvidedApiKeyStorageKey();
   const [userApiKey, setUserApiKey] = useState<string>('');
   const [revealKey, setRevealKey] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'removed'>('idle');
   const [activeSource, setActiveSource] = useState<KeySource>('none');
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(storageKey) || '';
-      setUserApiKey(stored);
-      setActiveSource(detectActiveKeySource(stored.trim().length > 0));
-    } catch {
-      setActiveSource(detectActiveKeySource(false));
-    }
-  }, [storageKey]);
+    const branded = readLocalStorageSafe(brandedStorageKey);
+    const legacy = readLocalStorageSafe(legacyStorageKey);
+    setUserApiKey(branded.length > 0 ? branded : legacy);
+    setActiveSource(detectActiveKeySource());
+  }, [brandedStorageKey, legacyStorageKey]);
 
   const handleSaveUserKey = () => {
     try {
       const trimmed = userApiKey.trim();
       if (trimmed.length === 0) {
-        window.localStorage.removeItem(storageKey);
+        window.localStorage.removeItem(brandedStorageKey);
+        window.localStorage.removeItem(legacyStorageKey);
         setSaveStatus('removed');
       } else {
-        window.localStorage.setItem(storageKey, trimmed);
+        window.localStorage.setItem(brandedStorageKey, trimmed);
+        window.localStorage.setItem(legacyStorageKey, trimmed);
         setSaveStatus('saved');
       }
-      setActiveSource(detectActiveKeySource(trimmed.length > 0));
+      setActiveSource(detectActiveKeySource());
       window.setTimeout(() => setSaveStatus('idle'), 2200);
     } catch (err) {
       console.error('[Settings] Failed to persist user API key in localStorage.', err);
@@ -91,9 +120,10 @@ export const Settings: React.FC<SettingsProps> = ({
   const handleClearUserKey = () => {
     setUserApiKey('');
     try {
-      window.localStorage.removeItem(storageKey);
+      window.localStorage.removeItem(brandedStorageKey);
+      window.localStorage.removeItem(legacyStorageKey);
       setSaveStatus('removed');
-      setActiveSource(detectActiveKeySource(false));
+      setActiveSource(detectActiveKeySource());
       window.setTimeout(() => setSaveStatus('idle'), 2200);
     } catch {
       /* ignore */
@@ -101,23 +131,38 @@ export const Settings: React.FC<SettingsProps> = ({
   };
 
   const sourceLabelMap: Record<KeySource, { label: string; color: string; badge: string }> = {
-    'import.meta.env': {
-      label: 'Environment Variable · import.meta.env.VITE_GEMINI_API_KEY',
+    'import.meta.env.VITE_GEMINI_API_KEY': {
+      label: 'Environment Variable · import.meta.env.VITE_GEMINI_API_KEY (Vite auto-injected · highest priority)',
       color: 'text-emerald-900 bg-emerald-50 border-emerald-200',
-      badge: 'ENV CONFIGURED'
+      badge: 'PRIORITY 1 · VITE ENV'
     },
-    'process.env': {
-      label: 'Environment Variable · process.env fallback',
+    'import.meta.env.GEMINI_API_KEY': {
+      label: 'Environment Variable · import.meta.env.GEMINI_API_KEY (non-VITE alias)',
       color: 'text-emerald-900 bg-emerald-50 border-emerald-200',
-      badge: 'NODE ENV'
+      badge: 'PRIORITY 2 · ENV ALIAS'
     },
-    'localStorage.user': {
-      label: 'User-Provided · stored locally in this browser (on device only)',
+    'process.env.VITE_GEMINI_API_KEY': {
+      label: 'Node/SSR Fallback · process.env.VITE_GEMINI_API_KEY',
+      color: 'text-emerald-900 bg-emerald-50 border-emerald-200',
+      badge: 'PRIORITY 3 · NODE VITE'
+    },
+    'process.env.GEMINI_API_KEY': {
+      label: 'Node/SSR Fallback · process.env.GEMINI_API_KEY',
+      color: 'text-emerald-900 bg-emerald-50 border-emerald-200',
+      badge: 'PRIORITY 4 · NODE ALIAS'
+    },
+    'localStorage.GEMINI_API_KEY': {
+      label: 'User-Provided (Legacy Key) · localStorage["GEMINI_API_KEY"] — stored on-device only',
       color: 'text-brand-900 bg-brand-50 border-brand-200',
-      badge: 'USER KEY'
+      badge: 'PRIORITY 5 · USER LEGACY'
+    },
+    'localStorage.tandc_user_gemini_api_key': {
+      label: 'User-Provided · localStorage["tandc_user_gemini_api_key"] — stored on-device only',
+      color: 'text-brand-900 bg-brand-50 border-brand-200',
+      badge: 'PRIORITY 6 · USER KEY'
     },
     'none': {
-      label: 'No key configured · analysis pipeline will display a configuration error when Run is clicked.',
+      label: 'No key configured from any source. Paste a key below and click Save, or set VITE_GEMINI_API_KEY in your build-time .env file.',
       color: 'text-rose-900 bg-rose-50 border-rose-200',
       badge: 'NOT CONFIGURED'
     }
@@ -161,21 +206,24 @@ export const Settings: React.FC<SettingsProps> = ({
           ) : (
             <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
           )}
-          <div className="flex flex-col gap-0.5">
+          <div className="flex flex-col gap-1">
             <span className="font-bold">{sourceInfo.label}</span>
-            {activeSource !== 'import.meta.env' && activeSource !== 'none' && (
-              <span className="text-[10px] opacity-80">Priority order: import.meta.env → process.env → user-provided key.</span>
-            )}
+            <span className="text-[10px] opacity-80 leading-relaxed">
+              6-source priority order:
+              <code className="mx-1 font-mono bg-white/60 px-1 py-0.5 rounded">VITE_</code> env →
+              <code className="mx-1 font-mono bg-white/60 px-1 py-0.5 rounded">GEMINI_</code> env →
+              process → legacy localStorage → branded localStorage
+            </span>
           </div>
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-2">
           <label htmlFor="user-api-key-input" className="text-[10px] uppercase font-extrabold text-gray-400 tracking-wider flex items-center gap-1">
             <KeyRound className="w-3 h-3 text-gray-400" />
-            <span>User-Provided Gemini API Key (Optional Override)</span>
+            <span>User-Provided Gemini API Key (Optional Override · saved to BOTH localStorage keys)</span>
           </label>
-          <div className="flex gap-2">
-            <div className="flex-1 relative">
+          <div className="flex gap-2 flex-wrap">
+            <div className="flex-1 relative min-w-0">
               <input
                 id="user-api-key-input"
                 type={revealKey ? 'text' : 'password'}
@@ -183,7 +231,7 @@ export const Settings: React.FC<SettingsProps> = ({
                 onChange={(e) => setUserApiKey(e.target.value)}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder="Paste AIza... or GEMINI key here to enable pipeline without .env file"
+                placeholder="Paste AIza... or AQ.A... Google AI Studio key here to enable the pipeline without a .env file"
                 className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 pr-9 text-xs outline-none input-focus font-semibold font-mono tracking-tight"
               />
               <button
@@ -216,22 +264,29 @@ export const Settings: React.FC<SettingsProps> = ({
             <button
               type="button"
               onClick={handleClearUserKey}
-              disabled={!userApiKey.trim()}
+              disabled={!userApiKey.trim() && readLocalStorageSafe(brandedStorageKey).length === 0 && readLocalStorageSafe(legacyStorageKey).length === 0}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              title="Remove user-provided key"
+              title="Remove user-provided key from both localStorage keys"
             >
               <XCircle className="w-3.5 h-3.5" />
             </button>
           </div>
+          {saveStatus === 'saved' && (
+            <p className="text-[10px] font-bold text-emerald-700 mt-1 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" />
+              Saved to both localStorage keys: <code className="font-mono mx-1 bg-emerald-100 px-1 py-0.5 rounded">{brandedStorageKey}</code> and <code className="font-mono mx-1 bg-emerald-100 px-1 py-0.5 rounded">{legacyStorageKey}</code> · reload the page to apply.
+            </p>
+          )}
           {saveStatus === 'removed' && (
             <p className="text-[10px] font-bold text-gray-500 mt-1 flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3" />
-              User-provided key cleared. Refresh the page to fall back to environment keys.
+              User-provided keys removed from both localStorage slots. Refresh the page to fall back to environment-provided keys.
             </p>
           )}
           <p className="text-[10px] text-gray-500 mt-1.5 leading-relaxed font-medium">
-            Stored strictly on-device in your browser localStorage under key <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">{storageKey}</code>.
-            Reload the page after saving for the resolver to pick up the new source. A valid environment <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">VITE_GEMINI_API_KEY</code> always takes priority.
+            On save, value is written to <strong>BOTH</strong> localStorage keys for maximum compatibility across imports and third-party tooling.
+            Environment-level <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">VITE_GEMINI_API_KEY</code> always takes priority and overrides any user-provided key.
+            Reload the page after saving so the init-time resolver picks up the updated source.
           </p>
         </div>
       </div>

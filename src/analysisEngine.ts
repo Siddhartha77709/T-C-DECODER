@@ -347,7 +347,8 @@ interface RawReport {
   overall_risk_rating?: string;
 }
 
-const USER_PROVIDED_API_KEY_STORAGE_KEY = 'tandc_user_gemini_api_key';
+export const USER_PROVIDED_API_KEY_STORAGE_KEY = 'tandc_user_gemini_api_key';
+export const LEGACY_USER_PROVIDED_API_KEY_STORAGE_KEY = 'GEMINI_API_KEY';
 
 type NodeProcessEnvShape = { VITE_GEMINI_API_KEY?: string; GEMINI_API_KEY?: string };
 type NodeProcessShape = { env?: NodeProcessEnvShape };
@@ -364,55 +365,84 @@ function getNodeProcessOrNull(): NodeProcessShape | null {
   return null;
 }
 
-function resolveGeminiApiKeyFromAllSources(): { key: string; source: 'import.meta.env' | 'process.env' | 'localStorage.user' | 'none' } {
-  if (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string') {
-    const k = import.meta.env.VITE_GEMINI_API_KEY.trim();
-    if (k.length > 0) {
-      return { key: k, source: 'import.meta.env' };
+type ApiKeySource =
+  | 'import.meta.env.VITE_GEMINI_API_KEY'
+  | 'import.meta.env.GEMINI_API_KEY'
+  | 'process.env.VITE_GEMINI_API_KEY'
+  | 'process.env.GEMINI_API_KEY'
+  | 'localStorage.GEMINI_API_KEY'
+  | `localStorage.${typeof USER_PROVIDED_API_KEY_STORAGE_KEY}`
+  | 'none';
+
+function readLocalStorageSafe(key: string): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    if (typeof window.localStorage === 'undefined') return '';
+    return (window.localStorage.getItem(key) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function resolveGeminiApiKeyFromAllSources(): { key: string; source: ApiKeySource } {
+  if (typeof import.meta !== 'undefined' && import.meta?.env) {
+    if (typeof import.meta.env.VITE_GEMINI_API_KEY === 'string') {
+      const k = import.meta.env.VITE_GEMINI_API_KEY.trim();
+      if (k.length > 0) return { key: k, source: 'import.meta.env.VITE_GEMINI_API_KEY' };
+    }
+    if (typeof import.meta.env.GEMINI_API_KEY === 'string') {
+      const k = import.meta.env.GEMINI_API_KEY.trim();
+      if (k.length > 0) return { key: k, source: 'import.meta.env.GEMINI_API_KEY' };
     }
   }
+
   const nodeProcess = getNodeProcessOrNull();
-  if (nodeProcess && nodeProcess.env) {
-    const fromProcessEnv = (nodeProcess.env.VITE_GEMINI_API_KEY || nodeProcess.env.GEMINI_API_KEY || '').trim();
-    if (fromProcessEnv.length > 0) {
-      return { key: fromProcessEnv, source: 'process.env' };
-    }
+  if (nodeProcess?.env) {
+    const pVite = (nodeProcess.env.VITE_GEMINI_API_KEY || '').trim();
+    if (pVite.length > 0) return { key: pVite, source: 'process.env.VITE_GEMINI_API_KEY' };
+    const pPlain = (nodeProcess.env.GEMINI_API_KEY || '').trim();
+    if (pPlain.length > 0) return { key: pPlain, source: 'process.env.GEMINI_API_KEY' };
   }
-  if (typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
-    try {
-      const fromStorage = (window.localStorage.getItem(USER_PROVIDED_API_KEY_STORAGE_KEY) || '').trim();
-      if (fromStorage.length > 0) {
-        return { key: fromStorage, source: 'localStorage.user' };
-      }
-    } catch {
-      // localStorage access blocked (e.g. private mode); ignore silently
-    }
-  }
+
+  const legacyStorage = readLocalStorageSafe(LEGACY_USER_PROVIDED_API_KEY_STORAGE_KEY);
+  if (legacyStorage.length > 0) return { key: legacyStorage, source: 'localStorage.GEMINI_API_KEY' };
+
+  const brandedStorage = readLocalStorageSafe(USER_PROVIDED_API_KEY_STORAGE_KEY);
+  if (brandedStorage.length > 0) return { key: brandedStorage, source: `localStorage.${USER_PROVIDED_API_KEY_STORAGE_KEY}` };
+
   return { key: '', source: 'none' };
 }
 
 const API_KEY_RESOLUTION = resolveGeminiApiKeyFromAllSources();
+const GEMINI_API_KEY_LOADED = (API_KEY_RESOLUTION.key || '').trim().length > 0;
 
 if (typeof window !== 'undefined') {
-  if (API_KEY_RESOLUTION.source === 'none') {
+  console.log('Gemini API Key Status:', GEMINI_API_KEY_LOADED ? 'Loaded' : 'Missing');
+  if (!GEMINI_API_KEY_LOADED) {
     console.warn(
       '[Gemini Config] WARNING: No Gemini API key resolved from any source. ' +
-      'Expected VITE_GEMINI_API_KEY via import.meta.env (Vite), or process.env.VITE_GEMINI_API_KEY / ' +
-      'process.env.GEMINI_API_KEY (Node/SSR fallback), or a user-provided key in localStorage key "' +
-      USER_PROVIDED_API_KEY_STORAGE_KEY + '". Set one of these to enable LLM analysis. ' +
-      'UI will show Settings input for user-provided key.'
+      'Priority resolution order:\n' +
+      '  1. import.meta.env.VITE_GEMINI_API_KEY  (Vite auto-injected)\n' +
+      '  2. import.meta.env.GEMINI_API_KEY       (non-VITE alias)\n' +
+      '  3. process.env.VITE_GEMINI_API_KEY      (Node/SSR fallback)\n' +
+      '  4. process.env.GEMINI_API_KEY           (Node/SSR alias)\n' +
+      '  5. localStorage["GEMINI_API_KEY"]       (user-provided, legacy)\n' +
+      `  6. localStorage["${USER_PROVIDED_API_KEY_STORAGE_KEY}"] (user-provided, Settings)\n\n` +
+      'Set any of the above to enable LLM analysis. The System Settings page can save keys to both localStorage slots.'
     );
   } else {
     console.info(
-      `[Gemini Config] API key resolved successfully. source=${API_KEY_RESOLUTION.source} ` +
-      `keyLength=${API_KEY_RESOLUTION.key.length} masked=${maskedKey(API_KEY_RESOLUTION.key)}`
+      `[Gemini Config] Resolved source: ${API_KEY_RESOLUTION.source}  ` +
+      `keyLength=${API_KEY_RESOLUTION.key.length}  ` +
+      `masked=${maskedKey(API_KEY_RESOLUTION.key)}`
     );
   }
 }
 
 const GEMINI_API_KEY_MISSING_ERROR =
   'Gemini API key is not configured. Set VITE_GEMINI_API_KEY in your .env file (recommended), ' +
-  'or provide a user-level key in the application Settings panel, then restart the dev server.';
+  'or add a user-level key in the System Settings panel (saved under localStorage keys ' +
+  `"${LEGACY_USER_PROVIDED_API_KEY_STORAGE_KEY}" and "${USER_PROVIDED_API_KEY_STORAGE_KEY}").`;
 
 function getGeminiApiKeyOrThrow(context?: string): string {
   const key = (API_KEY_RESOLUTION.key || '').trim();
@@ -420,18 +450,18 @@ function getGeminiApiKeyOrThrow(context?: string): string {
     const ctx = context ? ` [${context}]` : '';
     const err = new Error(GEMINI_API_KEY_MISSING_ERROR + ctx);
     const nodeProcess = getNodeProcessOrNull();
-    console.error('[Gemini Config] API key missing. All sources exhausted.', {
-      hasImportMetaEnv: typeof import.meta !== 'undefined' && !!import.meta?.env,
-      importMetaEnvKeyLength: (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string')
-        ? import.meta.env.VITE_GEMINI_API_KEY.length : 0,
-      hasProcessEnv: !!nodeProcess,
-      processEnvKeyLength: nodeProcess?.env
-        ? (nodeProcess.env.VITE_GEMINI_API_KEY || nodeProcess.env.GEMINI_API_KEY || '').length
-        : 0,
-      hasLocalStorage: typeof window !== 'undefined' && !!window.localStorage,
+    console.error('[Gemini Config] API key missing — all 6 sources exhausted.', {
       resolvedSource: API_KEY_RESOLUTION.source,
       context: context || '(none)',
-      userKeyHint: `Set via localStorage["${USER_PROVIDED_API_KEY_STORAGE_KEY}"] if Settings UI is unavailable.`
+      '1.import.meta.env.VITE_GEMINI_API_KEY.length': (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.VITE_GEMINI_API_KEY === 'string')
+        ? import.meta.env.VITE_GEMINI_API_KEY.length : 0,
+      '2.import.meta.env.GEMINI_API_KEY.length': (typeof import.meta !== 'undefined' && import.meta?.env && typeof import.meta.env.GEMINI_API_KEY === 'string')
+        ? import.meta.env.GEMINI_API_KEY.length : 0,
+      '3.process.env.VITE_GEMINI_API_KEY.length': (nodeProcess?.env ? (nodeProcess.env.VITE_GEMINI_API_KEY || '').length : 0),
+      '4.process.env.GEMINI_API_KEY.length': (nodeProcess?.env ? (nodeProcess.env.GEMINI_API_KEY || '').length : 0),
+      '5.localStorage.GEMINI_API_KEY.length': readLocalStorageSafe(LEGACY_USER_PROVIDED_API_KEY_STORAGE_KEY).length,
+      [`6.localStorage.${USER_PROVIDED_API_KEY_STORAGE_KEY}.length`]: readLocalStorageSafe(USER_PROVIDED_API_KEY_STORAGE_KEY).length,
+      hint: `Paste a valid Google AI Studio key into Settings → User-Provided Gemini API Key and click Save. It will be written to BOTH localStorage keys for maximum compatibility.`
     });
     throw err;
   }
@@ -444,6 +474,10 @@ function getGeminiApiKeyOrEmpty(): string {
 
 export function getUserProvidedApiKeyStorageKey(): string {
   return USER_PROVIDED_API_KEY_STORAGE_KEY;
+}
+
+export function getLegacyUserProvidedApiKeyStorageKey(): string {
+  return LEGACY_USER_PROVIDED_API_KEY_STORAGE_KEY;
 }
 
 const RETRY_MAX_ATTEMPTS = 4;
